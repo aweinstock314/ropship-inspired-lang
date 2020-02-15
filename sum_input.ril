@@ -1,0 +1,8 @@
+fn sum(nums: ptr word64, len: word64) -> word64 {
+    local ret: word64 = 0;
+    dotimes len {
+        ret += *nums;
+        nums += 1;
+    }
+    return ret;
+}

@@ -1,0 +1,24 @@
+ident = { (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+numeric_literal = { ASCII_DIGIT+ }
+
+type_id = { pointertype | "word64" }
+    pointertype = { "ptr" ~ type_id }
+
+vardecl = { ident ~ ":" ~ type_id }
+
+argument_list = { (vardecl ~ ","?)* }
+
+function = { "fn" ~ ident ~ "(" ~ argument_list ~ ")" ~ "->" ~ type_id ~ "{" ~ statement* ~ "}" }
+
+expr = { ident | numeric_literal | deref_expr }
+    deref_expr = { "*" ~ expr }
+
+compound_assign = { "=" | "+=" }
+
+statement = { localdef | assignment | dotimes | returnstmt }
+    localdef = { "local" ~ vardecl ~ "=" ~ expr ~ ";" }
+    assignment = { ident ~ compound_assign ~ expr ~ ";" }
+    dotimes = { "dotimes" ~ expr ~ "{" ~ statement* ~ "}" }
+    returnstmt = { "return" ~ expr ~ ";" }
+
+WHITESPACE = _{ " " | "\t" | "\n" }
