@@ -49,122 +49,24 @@ pub mod abstract_syntax {
     }
 }
 
-pub mod concrete_to_abstract_syntax {
-    use super::concrete_syntax::Rule;
-    use super::abstract_syntax::*;
-    use pest::iterators::Pair;
-    pub fn ident(pair: Pair<Rule>) -> String {
-        if let Rule::ident = pair.as_rule() {
-            pair.as_span().as_str().into()
-        } else {
-            panic!("expected ident, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn numeric_literal(pair: Pair<Rule>) -> String {
-        if let Rule::numeric_literal = pair.as_rule() {
-            pair.as_span().as_str().into()
-        } else {
-            panic!("expected numeric_literal, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn typeid(pair: Pair<Rule>) -> TypeId {
-        if let Rule::type_id = pair.as_rule() {
-            let mut pairs = pair.into_inner();
-            println!("{:?}", pairs);
-            let typair = pairs.next().unwrap();
-            let ty = match typair.as_rule() {
-                Rule::pointertype => TypeId::Pointer(Box::new(typeid(typair.into_inner().next().unwrap()))),
-                Rule::primword64 => TypeId::Word64,
-                other => panic!("invalid type_id {:?}", other),
-            };
-            println!("{:?}", ty);
-            assert!(pairs.next().is_none());
-            ty
-        } else {
-            panic!("expected type_id, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn vardecl(pair: Pair<Rule>) -> (String, TypeId) {
-        if let Rule::vardecl = pair.as_rule() {
-            let mut pairs = pair.into_inner();
-            let ident = ident(pairs.next().unwrap());
-            let typeid = typeid(pairs.next().unwrap());
-            assert!(pairs.next().is_none());
-            (ident, typeid)
-        } else {
-            panic!("expected vardecl, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn expr(pair: Pair<Rule>) -> Expr {
-        if let Rule::expr = pair.as_rule() {
-            let exp = pair.into_inner().next().unwrap();
-            let rule = exp.as_rule();
-            let mut exp = exp.into_inner();
-            match rule {
-                Rule::literal_expr => Expr::Literal(numeric_literal(exp.next().unwrap())),
-                Rule::var_expr => Expr::Var(ident(exp.next().unwrap())),
-                Rule::deref_expr => Expr::Deref(Box::new(expr(exp.next().unwrap()))),
-                other => panic!("invalid expr {:?}", other),
-            }
-        } else {
-            panic!("expected expr, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn assignment_modifier(pair: Pair<Rule>) -> AssignmentModifier {
-        match pair.as_span().as_str() {
-            "=" => AssignmentModifier::Normal,
-            "+=" => AssignmentModifier::Add,
-            other => panic!("invalid assignment modifier {:?}", other),
-        }
-    }
-    pub fn statement(pair: Pair<Rule>) -> Statement {
-        if let Rule::statement = pair.as_rule() {
-            let stmt = pair.into_inner().next().unwrap();
-            let rule = stmt.as_rule();
-            let mut stmt = stmt.into_inner();
-            let ret = match rule {
-                Rule::localdef => {
-                    let (ident, ty) = vardecl(stmt.next().unwrap());
-                    let initializer = expr(stmt.next().unwrap());
-                    Statement::LocalDecl { ident, ty, initializer }
-                },
-                Rule::dotimes => {
-                    let amount = expr(stmt.next().unwrap());
-                    let body = stmt.map(statement).collect();
-                    Statement::DoTimes { amount, body }
-                }
-                Rule::assignment => {
-                    let lhs = ident(stmt.next().unwrap());
-                    let modifier = assignment_modifier(stmt.next().unwrap());
-                    let rhs = expr(stmt.next().unwrap());
-                    Statement::Assigment { lhs, modifier, rhs }
-                }
-                Rule::returnstmt => {
-                    let val = expr(stmt.next().unwrap());
-                    Statement::Return { val }
-                }
-                other => panic!("invalid statement {:?}", other),
-            };
-            ret
-        } else {
-            panic!("expected statement, got {:?}", pair.as_rule());
-        }
-    }
-    pub fn functiondef(pair: Pair<Rule>) -> FunctionDef {
-        if let Rule::function = pair.as_rule() {
-            let mut pairs = pair.into_inner();
-            let name = ident(pairs.next().unwrap());
-            println!("name: {:?}", name);
-            let args: Vec<(String, TypeId)> = pairs.next().unwrap().into_inner().map(|x| vardecl(x)).collect();
-            println!("args: {:?}", args);
-            let return_type = typeid(pairs.next().unwrap());
-            println!("return_type: {:?}", return_type);
-            println!("rest of pairs: {:?}", pairs);
-            let body: Vec<Statement> = pairs.map(statement).collect();
-            FunctionDef { name, args, return_type, body }
-        } else {
-            panic!("expected function, got {:?}", pair.as_rule());
-        }
+pub mod concrete_to_abstract_syntax;
+
+pub mod x86_instructions {
+    // for reg in {eax,ecx,edx,ebx,esp,ebp,esi,edi}; do rasm2 "add esp, $reg" | sed 's/\(..\)/\\x\1/g; s/^.*$/\&*b"\0",/'; done
+    const ADD_ESP_EXX: [&[u8]; 8] = [&*b"\x01\xc4", &*b"\x01\xcc", &*b"\x01\xd4", &*b"\x01\xdc", &*b"\x01\xe4", &*b"\x01\xec", &*b"\x01\xf4", &*b"\x01\xfc"];
+    const SUB_ESP_EXX: [&[u8]; 8] = [&*b"\x29\xc4", &*b"\x29\xcc", &*b"\x29\xd4", &*b"\x29\xdc", &*b"\x29\xe4", &*b"\x29\xec", &*b"\x29\xf4", &*b"\x29\xfc"];
+    const POP_EXX: [&[u8]; 8] = [&*b"\x58", &*b"\x59", &*b"\x5a", &*b"\x5b", &*b"\x5c", &*b"\x5d", &*b"\x5e", &*b"\x5f"];
+    const ADD_EAX_EXX: [&[u8]; 8] = [&*b"\x01\xc0", &*b"\x01\xc8", &*b"\x01\xd0", &*b"\x01\xd8", &*b"\x01\xe0", &*b"\x01\xe8", &*b"\x01\xf0", &*b"\x01\xf8"];
+    const SUB_EAX_EXX: [&[u8]; 8] = [&*b"\x29\xc0", &*b"\x29\xc8", &*b"\x29\xd0", &*b"\x29\xd8", &*b"\x29\xe0", &*b"\x29\xe8", &*b"\x29\xf0", &*b"\x29\xf8"];
+    const XCHG_EAX_EXX: [&[u8]; 8] = [&*b"\x90", &*b"\x91", &*b"\x92", &*b"\x93", &*b"\x94", &*b"\x95", &*b"\x96", &*b"\x97"];
+    const CMOVLE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4e\xc0", &*b"\x0f\x4e\xc1", &*b"\x0f\x4e\xc2", &*b"\x0f\x4e\xc3", &*b"\x0f\x4e\xc4", &*b"\x0f\x4e\xc5", &*b"\x0f\x4e\xc6", &*b"\x0f\x4e\xc7"];
+    const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
+    const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"]; // "mov $reg, dword [eax]"
+    const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
+
+    #[repr(C)]
+    pub enum X86Reg {
+        EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
     }
 }
 
