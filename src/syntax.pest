@@ -7,7 +7,7 @@ type_id = { pointertype | primword64 }
 
 vardecl = { ident ~ ":" ~ type_id }
 
-argument_list = { (vardecl ~ ","?)* }
+argument_list = { ((vardecl ~ ",")* ~ vardecl) ? }
 
 function = { "fn" ~ ident ~ "(" ~ argument_list ~ ")" ~ "->" ~ type_id ~ "{" ~ statement* ~ "}" }
 
