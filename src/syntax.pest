@@ -1,8 +1,9 @@
 ident = { (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 numeric_literal = { ASCII_DIGIT+ }
 
-type_id = { pointertype | "word64" }
+type_id = { pointertype | primword64 }
     pointertype = { "ptr" ~ type_id }
+    primword64 = { "word64" }
 
 vardecl = { ident ~ ":" ~ type_id }
 
@@ -10,7 +11,9 @@ argument_list = { (vardecl ~ ","?)* }
 
 function = { "fn" ~ ident ~ "(" ~ argument_list ~ ")" ~ "->" ~ type_id ~ "{" ~ statement* ~ "}" }
 
-expr = { ident | numeric_literal | deref_expr }
+expr = { var_expr | literal_expr | deref_expr }
+    var_expr = { ident }
+    literal_expr = { numeric_literal }
     deref_expr = { "*" ~ expr }
 
 compound_assign = { "=" | "+=" }
