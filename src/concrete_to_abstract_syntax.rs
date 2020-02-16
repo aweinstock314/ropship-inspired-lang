@@ -18,14 +18,12 @@ pub fn numeric_literal(pair: Pair<Rule>) -> String {
 pub fn typeid(pair: Pair<Rule>) -> TypeId {
     if let Rule::type_id = pair.as_rule() {
         let mut pairs = pair.into_inner();
-        println!("{:?}", pairs);
         let typair = pairs.next().unwrap();
         let ty = match typair.as_rule() {
             Rule::pointertype => TypeId::Pointer(Box::new(typeid(typair.into_inner().next().unwrap()))),
             Rule::primword64 => TypeId::Word64,
             other => panic!("invalid type_id {:?}", other),
         };
-        println!("{:?}", ty);
         assert!(pairs.next().is_none());
         ty
     } else {
@@ -85,7 +83,7 @@ pub fn statement(pair: Pair<Rule>) -> Statement {
                 let lhs = ident(stmt.next().unwrap());
                 let modifier = assignment_modifier(stmt.next().unwrap());
                 let rhs = expr(stmt.next().unwrap());
-                Statement::Assigment { lhs, modifier, rhs }
+                Statement::Assignment { lhs, modifier, rhs }
             }
             Rule::returnstmt => {
                 let val = expr(stmt.next().unwrap());
@@ -102,12 +100,8 @@ pub fn functiondef(pair: Pair<Rule>) -> FunctionDef {
     if let Rule::function = pair.as_rule() {
         let mut pairs = pair.into_inner();
         let name = ident(pairs.next().unwrap());
-        println!("name: {:?}", name);
         let args: Vec<(String, TypeId)> = pairs.next().unwrap().into_inner().map(|x| vardecl(x)).collect();
-        println!("args: {:?}", args);
         let return_type = typeid(pairs.next().unwrap());
-        println!("return_type: {:?}", return_type);
-        println!("rest of pairs: {:?}", pairs);
         let body: Vec<Statement> = pairs.map(statement).collect();
         FunctionDef { name, args, return_type, body }
     } else {

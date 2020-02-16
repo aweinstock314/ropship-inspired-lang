@@ -31,7 +31,7 @@ pub mod abstract_syntax {
     pub enum Statement {
         LocalDecl { ident: String, ty: TypeId, initializer: Expr },
         DoTimes { amount: Expr, body: Vec<Statement> },
-        Assigment { lhs: String, modifier: AssignmentModifier, rhs: Expr },
+        Assignment { lhs: String, modifier: AssignmentModifier, rhs: Expr },
         Return { val: Expr },
     }
 
@@ -70,6 +70,98 @@ pub mod x86_instructions {
     }
 }
 
+pub mod high_level_eval {
+    use std::collections::BTreeMap;
+    use super::abstract_syntax::*;
+
+    #[derive(Debug)]
+    pub struct HighLevelState {
+        pub concrete_mem: BTreeMap<u64, u8>,
+        pub abstract_mem: BTreeMap<String, u64>,
+    }
+
+    impl HighLevelState {
+        pub fn new() -> HighLevelState {
+            HighLevelState {
+                concrete_mem: BTreeMap::new(),
+                abstract_mem: BTreeMap::new(),
+            }
+        }
+        pub fn allocate_data(&mut self, data: &[u8]) -> u64 {
+            let highest_allocated: u64 = self.concrete_mem.range(..).next_back().map(|(x,_)| *x).unwrap_or(0);
+            let start = highest_allocated + 1;
+            for (i, x) in data.iter().enumerate() {
+                self.concrete_mem.insert(start+(i as u64), *x);
+            }
+            start
+        }
+        pub fn read64(&self, addr: u64) -> u64 {
+            let mut res = 0u64;
+            for i in 0..8 {
+                res |= (self.concrete_mem[&(addr+i)] as u64) << (8*i);
+            }
+            res
+        }
+    }
+
+    pub fn eval_expr(state: &HighLevelState, expr: &Expr) -> u64 {
+        println!("eval expr: {:?} in state {:?}", expr, state);
+        match expr {
+            Expr::Literal(s) => s.parse::<u64>().unwrap(),
+            Expr::Deref(e) => { state.read64(eval_expr(state, e)) },
+            Expr::Var(s) => state.abstract_mem[s],
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum ControlFlow {
+        Next,
+        Return(u64),
+    }
+
+    pub fn eval_stmt(state: &mut HighLevelState, stmt: &Statement) -> ControlFlow {
+        println!("eval stmt: {:?}", stmt);
+        match stmt {
+            Statement::LocalDecl { ident, ty: _, initializer } => {
+                state.abstract_mem.insert(ident.clone(), eval_expr(state, initializer));
+            },
+            Statement::DoTimes { amount, body } => {
+                let amount = eval_expr(state, amount);
+                for _ in 0..amount {
+                    for stmt in body {
+                        match eval_stmt(state, stmt) {
+                            ControlFlow::Next => (),
+                            x @ ControlFlow::Return(_) => { return x },
+                        }
+                    }
+                }
+            }
+            Statement::Assignment { lhs, modifier, rhs } => {
+                let rhs_val = eval_expr(state, rhs); 
+                match modifier {
+                    AssignmentModifier::Normal => state.abstract_mem.insert(lhs.clone(), rhs_val),
+                    AssignmentModifier::Add => state.abstract_mem.insert(lhs.clone(), state.abstract_mem[lhs].wrapping_add(rhs_val.wrapping_mul(8))), // TODO: typeinfo for pointers
+                };
+            }
+            Statement::Return { val } => return ControlFlow::Return(eval_expr(state, val)),
+        }
+        ControlFlow::Next
+    }
+
+    pub fn eval_function(state: &mut HighLevelState, func: &FunctionDef, args: &[u64]) -> Option<u64> {
+        for ((name, _), val) in func.args.iter().zip(args) {
+            state.abstract_mem.insert(name.clone(), *val);
+        }
+        for stmt in func.body.iter() {
+            println!("state: {:?}", state);
+            match eval_stmt(state, stmt) {
+                ControlFlow::Next => (),
+                ControlFlow::Return(n) => return Some(n),
+            }
+        }
+        None
+    }
+}
 
 fn main() {
     let input_bytes = include_bytes!("../sum_input.ril");
@@ -77,6 +169,16 @@ fn main() {
     let res = concrete_syntax::RILParser::parse(concrete_syntax::Rule::function, &input_string);
     println!("{:?}\n", res);
     if let Ok(mut pairs) = res { 
-        println!("{:#?}", concrete_to_abstract_syntax::functiondef(pairs.next().unwrap()));
+        let f = concrete_to_abstract_syntax::functiondef(pairs.next().unwrap());
+        println!("{:?}", f);
+        {
+            use high_level_eval::*;
+            let mut state = HighLevelState::new();
+            let data: &[u64] = &[0,1,2,3,4,5,6,7,8,9];
+            let data64: &[u8] = unsafe { ::std::slice::from_raw_parts(data.as_ptr() as _, data.len() * ::std::mem::size_of::<u64>() / ::std::mem::size_of::<u8>()) };
+            let p = state.allocate_data(&data64);
+            let ret = eval_function(&mut state, &f, &[p, data.len() as _]);
+            println!("eval returned {:?}", ret);
+        }
     }
 }
