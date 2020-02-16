@@ -14,6 +14,21 @@ pub mod abstract_syntax {
         Word64,
     }
 
+    impl TypeId {
+        pub fn size_in_bytes(&self) -> usize {
+            match self {
+                TypeId::Word64 => 8,
+                TypeId::Pointer(_) => 8,
+            }
+        }
+        pub fn stride_to_increment(&self) -> usize {
+            match self {
+                TypeId::Word64 => 1,
+                TypeId::Pointer(t) => t.size_in_bytes(),
+            }
+        }
+    }
+
     #[derive(Debug)]
     pub enum AssignmentModifier {
         Normal,
@@ -58,6 +73,7 @@ pub mod x86_instructions {
     const POP_EXX: [&[u8]; 8] = [&*b"\x58", &*b"\x59", &*b"\x5a", &*b"\x5b", &*b"\x5c", &*b"\x5d", &*b"\x5e", &*b"\x5f"];
     const ADD_EAX_EXX: [&[u8]; 8] = [&*b"\x01\xc0", &*b"\x01\xc8", &*b"\x01\xd0", &*b"\x01\xd8", &*b"\x01\xe0", &*b"\x01\xe8", &*b"\x01\xf0", &*b"\x01\xf8"];
     const SUB_EAX_EXX: [&[u8]; 8] = [&*b"\x29\xc0", &*b"\x29\xc8", &*b"\x29\xd0", &*b"\x29\xd8", &*b"\x29\xe0", &*b"\x29\xe8", &*b"\x29\xf0", &*b"\x29\xf8"];
+    const XOR_EAX_EXX: [&[u8]; 8] = [&*b"\x31\xc0", &*b"\x31\xc8", &*b"\x31\xd0", &*b"\x31\xd8", &*b"\x31\xe0", &*b"\x31\xe8", &*b"\x31\xf0", &*b"\x31\xf8"];
     const XCHG_EAX_EXX: [&[u8]; 8] = [&*b"\x90", &*b"\x91", &*b"\x92", &*b"\x93", &*b"\x94", &*b"\x95", &*b"\x96", &*b"\x97"];
     const CMOVLE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4e\xc0", &*b"\x0f\x4e\xc1", &*b"\x0f\x4e\xc2", &*b"\x0f\x4e\xc3", &*b"\x0f\x4e\xc4", &*b"\x0f\x4e\xc5", &*b"\x0f\x4e\xc6", &*b"\x0f\x4e\xc7"];
     const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
@@ -70,108 +86,81 @@ pub mod x86_instructions {
     }
 }
 
-pub mod high_level_eval {
-    use std::collections::BTreeMap;
+pub mod high_level_eval;
+
+pub mod stackish_machine {
     use super::abstract_syntax::*;
+    use std::collections::BTreeMap;
 
-    #[derive(Debug)]
-    pub struct HighLevelState {
-        pub concrete_mem: BTreeMap<u64, u8>,
-        pub abstract_mem: BTreeMap<String, u64>,
-        pub type_ctx: BTreeMap<String, TypeId>,
+    #[derive(Debug, Clone, Copy)]
+    pub struct InstructionAddress(usize);
+    #[derive(Debug, Clone, Copy)]
+    pub enum RegisterNumber {
+        InstructionPointer,
+        Accumulator,
+        GeneralPurpose(usize),
+        ArgumentNumber(usize), // codegen these to be compatible with x86 ABI?
     }
 
-    impl HighLevelState {
-        pub fn new() -> HighLevelState {
-            HighLevelState {
-                concrete_mem: BTreeMap::new(),
-                abstract_mem: BTreeMap::new(),
+    #[derive(Debug, Clone, Copy)]
+    pub enum ArithKind {
+        Add, Sub, Mul, Xor, Swap, CMovLe
+    }
+
+    /// StackishOp<!> has no extra variants, and should map closely to x86 instructions
+    /// StackishOp<HigherLevelOps> has extra variants that can be desugared to the initial ops
+    /// instruction addresses are counted in IL ops at this level, not bytes
+    #[derive(Debug, Clone)]
+    pub enum StackishOp<A> {
+        Nop,
+        Jump(InstructionAddress),
+        LoadImmediate(RegisterNumber, u64),
+        ArithAccumReg(ArithKind, RegisterNumber),
+        LoadAccum(RegisterNumber),
+        StoreAccum(RegisterNumber),
+        Extra(A),
+    }
+    /// HigherLevelOps are more abstract, but are convenient to codegen
+    /// they can be lowered to plain StackishOp's later
+    #[derive(Debug, Clone)]
+    pub enum HigherLevelOps {
+        MovRegReg(RegisterNumber, RegisterNumber),
+        StoreStartRelative(isize, RegisterNumber),
+        LoadStartRelative(RegisterNumber, isize),
+    }
+
+    const ZONE_BETWEEN_VARS_AND_PROG: isize = 0x100;
+
+    #[derive(Debug)]
+    pub struct StackishProgram {
+        instrs: Vec<StackishOp<HigherLevelOps>>,
+        vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
+        type_ctx: BTreeMap<String, TypeId>,
+        next_var_offset: isize,
+    }
+
+    impl StackishProgram {
+        pub fn new() -> StackishProgram {
+            StackishProgram {
+                instrs: vec![],
+                vars_from_start: BTreeMap::new(),
                 type_ctx: BTreeMap::new(),
+                next_var_offset: -ZONE_BETWEEN_VARS_AND_PROG,
             }
         }
-        pub fn allocate_data(&mut self, data: &[u8]) -> u64 {
-            let highest_allocated: u64 = self.concrete_mem.range(..).next_back().map(|(x,_)| *x).unwrap_or(0);
-            let start = highest_allocated + 1;
-            for (i, x) in data.iter().enumerate() {
-                self.concrete_mem.insert(start+(i as u64), *x);
-            }
-            start
-        }
-        pub fn read64(&self, addr: u64) -> u64 {
-            let mut res = 0u64;
-            for i in 0..8 {
-                res |= (self.concrete_mem[&(addr+i)] as u64) << (8*i);
-            }
-            res
-        }
-        pub fn declare_value(&mut self, name: &str, ty: &TypeId, val: u64) {
-            self.abstract_mem.insert(name.into(), val);
+        pub fn declare_value(&mut self, name: &str, ty: &TypeId, value: RegisterNumber) {
+            self.next_var_offset -= ty.size_in_bytes() as isize;
+            let addr = self.next_var_offset;
+            self.vars_from_start.insert(name.into(), addr);
             self.type_ctx.insert(name.into(), ty.clone());
+            self.instrs.push(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
         }
     }
 
-    pub fn eval_expr(state: &HighLevelState, expr: &Expr) -> u64 {
-        println!("eval expr: {:?}", expr);
-        match expr {
-            Expr::Literal(s) => s.parse::<u64>().unwrap(),
-            Expr::Deref(e) => { state.read64(eval_expr(state, e)) },
-            Expr::Var(s) => state.abstract_mem[s],
+    pub fn translate_function(prog: &mut StackishProgram, func: &FunctionDef) {
+        for (i, (name, ty)) in func.args.iter().enumerate() {
+            prog.declare_value(name, ty, RegisterNumber::ArgumentNumber(i));
         }
-    }
-
-    #[derive(Debug)]
-    pub enum ControlFlow {
-        Next,
-        Return(u64),
-    }
-
-    pub fn eval_stmt(state: &mut HighLevelState, stmt: &Statement) -> ControlFlow {
-        println!("eval stmt: {:?}", stmt);
-        match stmt {
-            Statement::LocalDecl { ident, ty, initializer } => {
-                state.declare_value(ident, ty, eval_expr(state, initializer));
-            },
-            Statement::DoTimes { amount, body } => {
-                let amount = eval_expr(state, amount);
-                for _ in 0..amount {
-                    for stmt in body {
-                        match eval_stmt(state, stmt) {
-                            ControlFlow::Next => (),
-                            x @ ControlFlow::Return(_) => { return x },
-                        }
-                    }
-                }
-            }
-            Statement::Assignment { lhs, modifier, rhs } => {
-                let rhs_val = eval_expr(state, rhs); 
-                match modifier {
-                    AssignmentModifier::Normal => state.abstract_mem.insert(lhs.clone(), rhs_val),
-                    AssignmentModifier::Add => {
-                        let to_add = match state.type_ctx[lhs] {
-                            TypeId::Pointer(_) => rhs_val.wrapping_mul(8),
-                            _ => rhs_val,
-                        };
-                        state.abstract_mem.insert(lhs.clone(), state.abstract_mem[lhs].wrapping_add(to_add))
-                    },
-                };
-            },
-            Statement::Return { val } => return ControlFlow::Return(eval_expr(state, val)),
-        }
-        ControlFlow::Next
-    }
-
-    pub fn eval_function(state: &mut HighLevelState, func: &FunctionDef, args: &[u64]) -> Option<u64> {
-        for ((name, ty), val) in func.args.iter().zip(args) {
-            state.declare_value(name, ty, *val);
-        }
-        for stmt in func.body.iter() {
-            println!("state: {:?}", state);
-            match eval_stmt(state, stmt) {
-                ControlFlow::Next => (),
-                ControlFlow::Return(n) => return Some(n),
-            }
-        }
-        None
     }
 }
 
@@ -182,7 +171,7 @@ fn main() {
     println!("{:?}\n", res);
     if let Ok(mut pairs) = res { 
         let f = concrete_to_abstract_syntax::functiondef(pairs.next().unwrap());
-        println!("{:?}", f);
+        println!("{:#?}", f);
         {
             use high_level_eval::*;
             let mut state = HighLevelState::new();
@@ -191,6 +180,12 @@ fn main() {
             let p = state.allocate_data(&data64);
             let ret = eval_function(&mut state, &f, &[p, data.len() as _]);
             println!("eval returned {:?}", ret);
+        }
+        {
+            use stackish_machine::*;
+            let mut prog = StackishProgram::new();
+            translate_function(&mut prog, &f);
+            println!("stackish program: {:?}", prog);
         }
     }
 }
