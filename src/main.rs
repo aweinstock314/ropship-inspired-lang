@@ -91,8 +91,9 @@ pub mod high_level_eval;
 pub mod stackish_machine {
     use super::abstract_syntax::*;
     use std::collections::BTreeMap;
+    use std::iter::FromIterator;
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct InstructionAddress(usize);
     #[derive(Debug, Clone, Copy)]
     pub enum RegisterNumber {
@@ -109,7 +110,7 @@ pub mod stackish_machine {
 
     /// StackishOp<!> has no extra variants, and should map closely to x86 instructions
     /// StackishOp<HigherLevelOps> has extra variants that can be desugared to the initial ops
-    /// instruction addresses are counted in IL ops at this level, not bytes
+    /// instruction addresses are basic block indices at this level
     #[derive(Debug, Clone)]
     pub enum StackishOp<A> {
         Nop,
@@ -118,6 +119,7 @@ pub mod stackish_machine {
         ArithAccumReg(ArithKind, RegisterNumber),
         LoadAccum(RegisterNumber),
         StoreAccum(RegisterNumber),
+        Syscall,
         Extra(A),
     }
     /// HigherLevelOps are more abstract, but are convenient to codegen
@@ -133,7 +135,8 @@ pub mod stackish_machine {
 
     #[derive(Debug)]
     pub struct StackishProgram {
-        instrs: Vec<StackishOp<HigherLevelOps>>,
+        basic_blocks: BTreeMap<InstructionAddress, Vec<StackishOp<HigherLevelOps>>>,
+        current_bb: InstructionAddress,
         vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
         type_ctx: BTreeMap<String, TypeId>,
         next_var_offset: isize,
@@ -142,7 +145,8 @@ pub mod stackish_machine {
     impl StackishProgram {
         pub fn new() -> StackishProgram {
             StackishProgram {
-                instrs: vec![],
+                basic_blocks: BTreeMap::from_iter(vec![(InstructionAddress(0), vec![])]),
+                current_bb: InstructionAddress(0),
                 vars_from_start: BTreeMap::new(),
                 type_ctx: BTreeMap::new(),
                 next_var_offset: -ZONE_BETWEEN_VARS_AND_PROG,
@@ -153,13 +157,40 @@ pub mod stackish_machine {
             let addr = self.next_var_offset;
             self.vars_from_start.insert(name.into(), addr);
             self.type_ctx.insert(name.into(), ty.clone());
-            self.instrs.push(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
+            self.basic_blocks.get_mut(&self.current_bb).unwrap().push(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
+        }
+        pub fn start_basic_block(&mut self) {
+        }
+    }
+    pub fn translate_expr(prog: &mut StackishProgram, expr: &Expr) -> RegisterNumber {
+        println!("translate expr {:?}: {:?}", expr, prog);
+        unimplemented!()
+    }
+    pub fn translate_stmt(prog: &mut StackishProgram, stmt: &Statement) {
+        println!("translate stmt {:?}", stmt);
+        match stmt {
+            Statement::LocalDecl { ident, ty, initializer } => {
+                let tmp = translate_expr(prog, initializer);
+                prog.declare_value(ident, ty, tmp);
+            },
+            Statement::DoTimes { amount, body } => {
+                // dotimes n { stmts } => tmp <- n; label0: stmts; tmp -= 1; jneq label0;
+                let reg_amount = translate_expr(prog, amount);
+                let label0 = prog.start_basic_block();
+                for inner_stmt in body {
+                    translate_stmt(prog, inner_stmt); // TODO: I don't think this will handle forwards gotos
+                }
+            }
+            other => unimplemented!("{:?}", other),
         }
     }
 
     pub fn translate_function(prog: &mut StackishProgram, func: &FunctionDef) {
         for (i, (name, ty)) in func.args.iter().enumerate() {
             prog.declare_value(name, ty, RegisterNumber::ArgumentNumber(i));
+        }
+        for stmt in func.body.iter() {
+            translate_stmt(prog, stmt);
         }
     }
 }
