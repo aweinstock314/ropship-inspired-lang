@@ -8,7 +8,7 @@ pub mod concrete_syntax {
 }
 
 pub mod abstract_syntax {
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum TypeId {
         Pointer(Box<TypeId>),
         Word64,
@@ -78,6 +78,7 @@ pub mod high_level_eval {
     pub struct HighLevelState {
         pub concrete_mem: BTreeMap<u64, u8>,
         pub abstract_mem: BTreeMap<String, u64>,
+        pub type_ctx: BTreeMap<String, TypeId>,
     }
 
     impl HighLevelState {
@@ -85,6 +86,7 @@ pub mod high_level_eval {
             HighLevelState {
                 concrete_mem: BTreeMap::new(),
                 abstract_mem: BTreeMap::new(),
+                type_ctx: BTreeMap::new(),
             }
         }
         pub fn allocate_data(&mut self, data: &[u8]) -> u64 {
@@ -102,10 +104,14 @@ pub mod high_level_eval {
             }
             res
         }
+        pub fn declare_value(&mut self, name: &str, ty: &TypeId, val: u64) {
+            self.abstract_mem.insert(name.into(), val);
+            self.type_ctx.insert(name.into(), ty.clone());
+        }
     }
 
     pub fn eval_expr(state: &HighLevelState, expr: &Expr) -> u64 {
-        println!("eval expr: {:?} in state {:?}", expr, state);
+        println!("eval expr: {:?}", expr);
         match expr {
             Expr::Literal(s) => s.parse::<u64>().unwrap(),
             Expr::Deref(e) => { state.read64(eval_expr(state, e)) },
@@ -122,8 +128,8 @@ pub mod high_level_eval {
     pub fn eval_stmt(state: &mut HighLevelState, stmt: &Statement) -> ControlFlow {
         println!("eval stmt: {:?}", stmt);
         match stmt {
-            Statement::LocalDecl { ident, ty: _, initializer } => {
-                state.abstract_mem.insert(ident.clone(), eval_expr(state, initializer));
+            Statement::LocalDecl { ident, ty, initializer } => {
+                state.declare_value(ident, ty, eval_expr(state, initializer));
             },
             Statement::DoTimes { amount, body } => {
                 let amount = eval_expr(state, amount);
@@ -140,17 +146,23 @@ pub mod high_level_eval {
                 let rhs_val = eval_expr(state, rhs); 
                 match modifier {
                     AssignmentModifier::Normal => state.abstract_mem.insert(lhs.clone(), rhs_val),
-                    AssignmentModifier::Add => state.abstract_mem.insert(lhs.clone(), state.abstract_mem[lhs].wrapping_add(rhs_val.wrapping_mul(8))), // TODO: typeinfo for pointers
+                    AssignmentModifier::Add => {
+                        let to_add = match state.type_ctx[lhs] {
+                            TypeId::Pointer(_) => rhs_val.wrapping_mul(8),
+                            _ => rhs_val,
+                        };
+                        state.abstract_mem.insert(lhs.clone(), state.abstract_mem[lhs].wrapping_add(to_add))
+                    },
                 };
-            }
+            },
             Statement::Return { val } => return ControlFlow::Return(eval_expr(state, val)),
         }
         ControlFlow::Next
     }
 
     pub fn eval_function(state: &mut HighLevelState, func: &FunctionDef, args: &[u64]) -> Option<u64> {
-        for ((name, _), val) in func.args.iter().zip(args) {
-            state.abstract_mem.insert(name.clone(), *val);
+        for ((name, ty), val) in func.args.iter().zip(args) {
+            state.declare_value(name, ty, *val);
         }
         for stmt in func.body.iter() {
             println!("state: {:?}", state);
