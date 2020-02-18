@@ -140,6 +140,7 @@ pub mod stackish_machine {
         vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
         type_ctx: BTreeMap<String, TypeId>,
         next_var_offset: isize,
+        next_temp_register: usize,
     }
 
     impl StackishProgram {
@@ -150,6 +151,7 @@ pub mod stackish_machine {
                 vars_from_start: BTreeMap::new(),
                 type_ctx: BTreeMap::new(),
                 next_var_offset: -ZONE_BETWEEN_VARS_AND_PROG,
+                next_temp_register: 0,
             }
         }
         pub fn declare_value(&mut self, name: &str, ty: &TypeId, value: RegisterNumber) {
@@ -157,14 +159,49 @@ pub mod stackish_machine {
             let addr = self.next_var_offset;
             self.vars_from_start.insert(name.into(), addr);
             self.type_ctx.insert(name.into(), ty.clone());
-            self.basic_blocks.get_mut(&self.current_bb).unwrap().push(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
+            self.push_to_current_bb(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
+        }
+        pub fn push_to_current_bb(&mut self, op: StackishOp<HigherLevelOps>) {
+            self.basic_blocks.get_mut(&self.current_bb).unwrap().push(op);
+        }
+        pub fn extend_current_bb(&mut self, ops: &[StackishOp<HigherLevelOps>]) {
+            self.basic_blocks.get_mut(&self.current_bb).unwrap().extend_from_slice(ops);
         }
         pub fn start_basic_block(&mut self) {
+            self.current_bb.0 += 1;
+            self.basic_blocks.insert(self.current_bb, vec![]);
+        }
+        pub fn get_next_gpr(&mut self) -> RegisterNumber {
+            self.next_temp_register += 1;
+            RegisterNumber::GeneralPurpose(self.next_temp_register)
         }
     }
+    // TODO: should this take a register number (hence requiring translate_stmt to schedule all the registers?
     pub fn translate_expr(prog: &mut StackishProgram, expr: &Expr) -> RegisterNumber {
         println!("translate expr {:?}: {:?}", expr, prog);
-        unimplemented!()
+        match expr {
+            Expr::Literal(s) => {
+                let out = prog.get_next_gpr();
+                prog.push_to_current_bb(StackishOp::LoadImmediate(out, s.parse::<u64>().unwrap()));
+                out
+            },
+            Expr::Var(s) => {
+                let out = prog.get_next_gpr();
+                let offset = prog.vars_from_start[s];
+                prog.push_to_current_bb(StackishOp::Extra(HigherLevelOps::LoadStartRelative(out, offset)));
+                out
+            }
+            Expr::Deref(e) => {
+                let out = prog.get_next_gpr();
+                let tmp = translate_expr(prog, e);
+                prog.extend_current_bb(&[
+                    // NOTE: clobbers accumulator
+                    StackishOp::LoadAccum(tmp),
+                    StackishOp::ArithAccumReg(ArithKind::Swap, out),
+                ]);
+                out
+            },
+        }
     }
     pub fn translate_stmt(prog: &mut StackishProgram, stmt: &Statement) {
         println!("translate stmt {:?}", stmt);
@@ -181,7 +218,24 @@ pub mod stackish_machine {
                     translate_stmt(prog, inner_stmt); // TODO: I don't think this will handle forwards gotos
                 }
             }
-            other => unimplemented!("{:?}", other),
+            Statement::Assignment { lhs, modifier, rhs } => {
+                let lhs_loc = prog.vars_from_start[lhs];
+                let rhs_reg = translate_expr(prog, rhs);
+                let ops = match modifier {
+                    AssignmentModifier::Normal => vec![StackishOp::Extra(HigherLevelOps::StoreStartRelative(lhs_loc, rhs_reg))],
+                    AssignmentModifier::Add => vec![
+                        // TODO: clobbers accumulator, should translation have that liberty in general?
+                        StackishOp::Extra(HigherLevelOps::LoadStartRelative(RegisterNumber::Accumulator, lhs_loc)),
+                        StackishOp::ArithAccumReg(ArithKind::Add, rhs_reg),
+                        StackishOp::Extra(HigherLevelOps::StoreStartRelative(lhs_loc, RegisterNumber::Accumulator)),
+                        ],
+                    };
+                prog.extend_current_bb(&ops);
+            }
+            Statement::Return { val } => {
+                let ret = translate_expr(prog, val);
+                prog.push_to_current_bb(StackishOp::ArithAccumReg(ArithKind::Swap, ret));
+            }
         }
     }
 
