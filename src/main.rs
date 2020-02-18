@@ -89,6 +89,7 @@ pub mod x86_instructions {
 pub mod high_level_eval;
 
 pub mod stackish_machine {
+    use std::fmt::{self, Display, Formatter};
     use super::abstract_syntax::*;
     use std::collections::BTreeMap;
     use std::iter::FromIterator;
@@ -141,6 +142,25 @@ pub mod stackish_machine {
         type_ctx: BTreeMap<String, TypeId>,
         next_var_offset: isize,
         next_temp_register: usize,
+    }
+
+    impl Display for StackishProgram {
+        fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+            writeln!(fmt, "StackishProgram {{")?;
+            writeln!(fmt, "variable offsets:")?;
+            for (k, v) in self.vars_from_start.iter() {
+                writeln!(fmt, "  {:?}: {}", k, v)?;
+            }
+            writeln!(fmt, "basic blocks:")?;
+            for (k, v) in self.basic_blocks.iter() {
+                writeln!(fmt, "bb{}:", k.0)?;
+                for op in v.iter() {
+                    writeln!(fmt, "  {:?}", op)?;
+                }
+            }
+            writeln!(fmt, "}}")?;
+            Ok(())
+        }
     }
 
     impl StackishProgram {
@@ -270,7 +290,7 @@ fn main() {
             use stackish_machine::*;
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
-            println!("stackish program: {:?}", prog);
+            println!("stackish program: {}", prog);
         }
     }
 }
