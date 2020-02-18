@@ -84,15 +84,22 @@ pub mod x86_instructions {
     pub enum X86Reg {
         EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
     }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum X86ConditionCode {
+        Above, AboveEq, Below, BelowEq, Carry, RCX, Eq, Greater, GreaterEq, Less, LessEq, NotEq,
+        NotOverflow, NotParity, NotSign, Overflow, Parity, Sign,
+    }
 }
 
 pub mod high_level_eval;
 
 pub mod stackish_machine {
-    use std::fmt::{self, Display, Formatter};
-    use super::abstract_syntax::*;
     use std::collections::BTreeMap;
+    use std::fmt::{self, Display, Formatter};
     use std::iter::FromIterator;
+    use super::abstract_syntax::*;
+    use super::x86_instructions::X86ConditionCode;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct InstructionAddress(usize);
@@ -116,6 +123,7 @@ pub mod stackish_machine {
     pub enum StackishOp<A> {
         Nop,
         Jump(InstructionAddress),
+        ConditionalBranch(X86ConditionCode, InstructionAddress), // CMOVcc rsp, resolved_addr
         LoadImmediate(RegisterNumber, u64),
         ArithAccumReg(ArithKind, RegisterNumber),
         LoadAccum(RegisterNumber),
@@ -123,6 +131,7 @@ pub mod stackish_machine {
         Syscall,
         Extra(A),
     }
+
     /// HigherLevelOps are more abstract, but are convenient to codegen
     /// they can be lowered to plain StackishOp's later
     #[derive(Debug, Clone)]
@@ -187,9 +196,10 @@ pub mod stackish_machine {
         pub fn extend_current_bb(&mut self, ops: &[StackishOp<HigherLevelOps>]) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().extend_from_slice(ops);
         }
-        pub fn start_basic_block(&mut self) {
+        pub fn start_basic_block(&mut self) -> InstructionAddress {
             self.current_bb.0 += 1;
             self.basic_blocks.insert(self.current_bb, vec![]);
+            self.current_bb
         }
         pub fn get_next_gpr(&mut self) -> RegisterNumber {
             self.next_temp_register += 1;
@@ -231,12 +241,20 @@ pub mod stackish_machine {
                 prog.declare_value(ident, ty, tmp);
             },
             Statement::DoTimes { amount, body } => {
-                // dotimes n { stmts } => tmp <- n; label0: stmts; tmp -= 1; jneq label0;
+                // dotimes n { stmts } => tmp <- n; label0: stmts; tmp -= 1; jneq label0; label1:
                 let reg_amount = translate_expr(prog, amount);
                 let label0 = prog.start_basic_block();
                 for inner_stmt in body {
                     translate_stmt(prog, inner_stmt); // TODO: I don't think this will handle forwards gotos
                 }
+                let one = translate_expr(prog, &Expr::Literal("1".into())); // TODO: check if this is already in some register/have a global "1" value lying around/codegen decrement
+                prog.extend_current_bb(&[
+                    StackishOp::ArithAccumReg(ArithKind::Swap, reg_amount),
+                    StackishOp::ArithAccumReg(ArithKind::Sub, one), // sets flags for the test
+                    StackishOp::ArithAccumReg(ArithKind::Swap, reg_amount), // xchg preserves flags
+                    StackishOp::ConditionalBranch(X86ConditionCode::NotEq, label0),
+                ]);
+                let _label1 = prog.start_basic_block(); // TODO: pass around the bb instead of always working on the latest one, so that a "break" can target this
             }
             Statement::Assignment { lhs, modifier, rhs } => {
                 let lhs_loc = prog.vars_from_start[lhs];
