@@ -69,28 +69,25 @@ pub mod concrete_to_abstract_syntax;
 
 pub mod x86_instructions {
     // for reg in {eax,ecx,edx,ebx,esp,ebp,esi,edi}; do rasm2 "add esp, $reg" | sed 's/\(..\)/\\x\1/g; s/^.*$/\&*b"\0",/'; done
-    const ADD_ESP_EXX: [&[u8]; 8] = [&*b"\x01\xc4", &*b"\x01\xcc", &*b"\x01\xd4", &*b"\x01\xdc", &*b"\x01\xe4", &*b"\x01\xec", &*b"\x01\xf4", &*b"\x01\xfc"];
-    const SUB_ESP_EXX: [&[u8]; 8] = [&*b"\x29\xc4", &*b"\x29\xcc", &*b"\x29\xd4", &*b"\x29\xdc", &*b"\x29\xe4", &*b"\x29\xec", &*b"\x29\xf4", &*b"\x29\xfc"];
     const POP_EXX: [&[u8]; 8] = [&*b"\x58", &*b"\x59", &*b"\x5a", &*b"\x5b", &*b"\x5c", &*b"\x5d", &*b"\x5e", &*b"\x5f"];
-    const ADD_EAX_EXX: [&[u8]; 8] = [&*b"\x01\xc0", &*b"\x01\xc8", &*b"\x01\xd0", &*b"\x01\xd8", &*b"\x01\xe0", &*b"\x01\xe8", &*b"\x01\xf0", &*b"\x01\xf8"];
-    const SUB_EAX_EXX: [&[u8]; 8] = [&*b"\x29\xc0", &*b"\x29\xc8", &*b"\x29\xd0", &*b"\x29\xd8", &*b"\x29\xe0", &*b"\x29\xe8", &*b"\x29\xf0", &*b"\x29\xf8"];
-    const XOR_EAX_EXX: [&[u8]; 8] = [&*b"\x31\xc0", &*b"\x31\xc8", &*b"\x31\xd0", &*b"\x31\xd8", &*b"\x31\xe0", &*b"\x31\xe8", &*b"\x31\xf0", &*b"\x31\xf8"];
     const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
     const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"]; // "mov $reg, dword [eax]"
     const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
-    include!("xchg_gadgets.generated.rs");
+    include!("arith_gadgets.generated.rs");
     include!("cmov_gadgets.generated.rs");
 
     #[derive(Debug, Clone, Copy)]
-    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, Xchg(X86Reg), CmovCcEax(X86ConditionCode) }
+    pub enum GadgetKind { Pop, Imul, LoadEax, StoreEax, Add(X86Reg), Sub(X86Reg), Xor(X86Reg), Mov(X86Reg), Xchg(X86Reg), CmovCcEax(X86ConditionCode) }
 
     impl GadgetKind {
         pub fn all_values() -> Vec<GadgetKind> {
             use GadgetKind::*;
-            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax];
-            for reg in &X86Reg::all_values() {
-                ret.push(Xchg(*reg));
-            }
+            let mut ret = vec![Pop, Imul, LoadEax, StoreEax];
+            for reg in &X86Reg::all_values() { ret.push(Add(*reg)); }
+            for reg in &X86Reg::all_values() { ret.push(Sub(*reg)); }
+            for reg in &X86Reg::all_values() { ret.push(Xor(*reg)); }
+            for reg in &X86Reg::all_values() { ret.push(Mov(*reg)); }
+            for reg in &X86Reg::all_values() { ret.push(Xchg(*reg)); }
             for cc in &X86ConditionCode::all_values() {
                 if *cc != X86ConditionCode::RCX {
                     ret.push(CmovCcEax(*cc));
@@ -101,23 +98,20 @@ pub mod x86_instructions {
         pub fn gadgets_by_register(&self) -> [&'static [u8]; 8] {
             use GadgetKind::*; use X86ConditionCode::*;
             match *self {
-                AddEsp => ADD_ESP_EXX,
-                SubEsp => SUB_ESP_EXX,
                 Pop => POP_EXX,
-                AddEax => ADD_EAX_EXX,
-                SubEax => SUB_EAX_EXX,
-                XorEax => XOR_EAX_EXX,
                 Imul => IMUL_EXX,
                 LoadEax => LOAD_EXX_EAX,
                 StoreEax => STORE_EAX_EXX,
-                Xchg(X86Reg::EAX) => XCHG_EAX_EXX,
-                Xchg(X86Reg::ECX) => XCHG_ECX_EXX,
-                Xchg(X86Reg::EDX) => XCHG_EDX_EXX,
-                Xchg(X86Reg::EBX) => XCHG_EBX_EXX,
-                Xchg(X86Reg::ESP) => XCHG_ESP_EXX,
-                Xchg(X86Reg::EBP) => XCHG_EBP_EXX,
-                Xchg(X86Reg::ESI) => XCHG_ESI_EXX,
-                Xchg(X86Reg::EDI) => XCHG_EDI_EXX,
+                Add(X86Reg::EAX) => ADD_EAX_EXX, Add(X86Reg::ECX) => ADD_ECX_EXX, Add(X86Reg::EDX) => ADD_EDX_EXX, Add(X86Reg::EBX) => ADD_EBX_EXX,
+                Add(X86Reg::ESP) => ADD_ESP_EXX, Add(X86Reg::EBP) => ADD_EBP_EXX, Add(X86Reg::ESI) => ADD_ESI_EXX, Add(X86Reg::EDI) => ADD_EDI_EXX,
+                Sub(X86Reg::EAX) => SUB_EAX_EXX, Sub(X86Reg::ECX) => SUB_ECX_EXX, Sub(X86Reg::EDX) => SUB_EDX_EXX, Sub(X86Reg::EBX) => SUB_EBX_EXX,
+                Sub(X86Reg::ESP) => SUB_ESP_EXX, Sub(X86Reg::EBP) => SUB_EBP_EXX, Sub(X86Reg::ESI) => SUB_ESI_EXX, Sub(X86Reg::EDI) => SUB_EDI_EXX,
+                Xor(X86Reg::EAX) => XOR_EAX_EXX, Xor(X86Reg::ECX) => XOR_ECX_EXX, Xor(X86Reg::EDX) => XOR_EDX_EXX, Xor(X86Reg::EBX) => XOR_EBX_EXX,
+                Xor(X86Reg::ESP) => XOR_ESP_EXX, Xor(X86Reg::EBP) => XOR_EBP_EXX, Xor(X86Reg::ESI) => XOR_ESI_EXX, Xor(X86Reg::EDI) => XOR_EDI_EXX,
+                Mov(X86Reg::EAX) => MOV_EAX_EXX, Mov(X86Reg::ECX) => MOV_ECX_EXX, Mov(X86Reg::EDX) => MOV_EDX_EXX, Mov(X86Reg::EBX) => MOV_EBX_EXX,
+                Mov(X86Reg::ESP) => MOV_ESP_EXX, Mov(X86Reg::EBP) => MOV_EBP_EXX, Mov(X86Reg::ESI) => MOV_ESI_EXX, Mov(X86Reg::EDI) => MOV_EDI_EXX,
+                Xchg(X86Reg::EAX) => XCHG_EAX_EXX, Xchg(X86Reg::ECX) => XCHG_ECX_EXX, Xchg(X86Reg::EDX) => XCHG_EDX_EXX, Xchg(X86Reg::EBX) => XCHG_EBX_EXX,
+                Xchg(X86Reg::ESP) => XCHG_ESP_EXX, Xchg(X86Reg::EBP) => XCHG_EBP_EXX, Xchg(X86Reg::ESI) => XCHG_ESI_EXX, Xchg(X86Reg::EDI) => XCHG_EDI_EXX,
                 CmovCcEax(Above) => CMOVA_EAX_EXX,
                 CmovCcEax(AboveEq) => CMOVAE_EAX_EXX,
                 CmovCcEax(Below) => CMOVB_EAX_EXX,
@@ -202,6 +196,7 @@ pub mod gadget_search {
     pub struct ViewGadgetsAsChart<'a, 'b>(pub &'a BTreeMap<&'b [u8], Vec<usize>>);
     impl<'a, 'b> fmt::Display for ViewGadgetsAsChart<'a, 'b> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            use fmt::Write;
             use super::x86_instructions::{GadgetKind, X86Reg};
             let max_kind_width = GadgetKind::all_values().iter().fold(0, |w, k| w.max(format!("{:?}", k).len()));
             write!(f, "\n{:>w$}", "", w=max_kind_width+1)?;
@@ -211,12 +206,19 @@ pub mod gadget_search {
             }
             write!(f, "\n")?;
             for kind in &GadgetKind::all_values() {
-                write!(f, "{:>w$}", format!("{:?}", kind), w=max_kind_width+1)?;
+                let mut buf = String::new();
+                let mut emit_row = false;
+                write!(buf, "{:>w$}", format!("{:?}", kind), w=max_kind_width+1)?;
                 for reg in &X86Reg::all_values() {
                     let regstr = format!("{:?}", reg);
-                    write!(f, "{:>width$}", self.0.contains_key(kind.gadgets_by_register()[*reg as usize]) as u8, width=regstr.len()+1)?;
+                    let has_gadget = self.0.contains_key(kind.gadgets_by_register()[*reg as usize]);
+                    write!(buf, "{:>width$}", has_gadget as u8, width=regstr.len()+1)?;
+                    emit_row |= has_gadget;
                 }
-                write!(f, "\n")?;
+                write!(buf, "\n")?;
+                if emit_row {
+                    write!(f, "{}", buf)?;
+                }
             }
             Ok(())
         }
