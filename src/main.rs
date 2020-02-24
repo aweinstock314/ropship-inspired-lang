@@ -76,30 +76,86 @@ pub mod x86_instructions {
     const SUB_EAX_EXX: [&[u8]; 8] = [&*b"\x29\xc0", &*b"\x29\xc8", &*b"\x29\xd0", &*b"\x29\xd8", &*b"\x29\xe0", &*b"\x29\xe8", &*b"\x29\xf0", &*b"\x29\xf8"];
     const XOR_EAX_EXX: [&[u8]; 8] = [&*b"\x31\xc0", &*b"\x31\xc8", &*b"\x31\xd0", &*b"\x31\xd8", &*b"\x31\xe0", &*b"\x31\xe8", &*b"\x31\xf0", &*b"\x31\xf8"];
     const XCHG_EAX_EXX: [&[u8]; 8] = [&*b"\x90", &*b"\x91", &*b"\x92", &*b"\x93", &*b"\x94", &*b"\x95", &*b"\x96", &*b"\x97"];
-    const CMOVLE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4e\xc0", &*b"\x0f\x4e\xc1", &*b"\x0f\x4e\xc2", &*b"\x0f\x4e\xc3", &*b"\x0f\x4e\xc4", &*b"\x0f\x4e\xc5", &*b"\x0f\x4e\xc6", &*b"\x0f\x4e\xc7"];
     const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
     const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"]; // "mov $reg, dword [eax]"
     const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
+    /*
+for cc in {A,AE,B,BE,C,E,G,GE,L,LE,NE,NO,NP,NS,O,P,S}; do echo -n "const CMOV${cc}_EAX_EXX: &[&[u8]; 8] = [";
+    (for reg in {eax,ecx,edx,ebx,esp,ebp,esi,edi}; do rasm2 "cmov$cc eax, $reg" | sed 's/\(..\)/\\x\1/g; s/^.*$/\&*b"\0",/'; done) | tr '\n' ' ';
+echo "];"; done
+    */
+    const CMOVA_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x47\xc0", &*b"\x0f\x47\xc1", &*b"\x0f\x47\xc2", &*b"\x0f\x47\xc3", &*b"\x0f\x47\xc4", &*b"\x0f\x47\xc5", &*b"\x0f\x47\xc6", &*b"\x0f\x47\xc7", ];
+    const CMOVAE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x43\xc0", &*b"\x0f\x43\xc1", &*b"\x0f\x43\xc2", &*b"\x0f\x43\xc3", &*b"\x0f\x43\xc4", &*b"\x0f\x43\xc5", &*b"\x0f\x43\xc6", &*b"\x0f\x43\xc7", ];
+    const CMOVB_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x42\xc0", &*b"\x0f\x42\xc1", &*b"\x0f\x42\xc2", &*b"\x0f\x42\xc3", &*b"\x0f\x42\xc4", &*b"\x0f\x42\xc5", &*b"\x0f\x42\xc6", &*b"\x0f\x42\xc7", ];
+    const CMOVBE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x46\xc0", &*b"\x0f\x46\xc1", &*b"\x0f\x46\xc2", &*b"\x0f\x46\xc3", &*b"\x0f\x46\xc4", &*b"\x0f\x46\xc5", &*b"\x0f\x46\xc6", &*b"\x0f\x46\xc7", ];
+    const CMOVC_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x42\xc0", &*b"\x0f\x42\xc1", &*b"\x0f\x42\xc2", &*b"\x0f\x42\xc3", &*b"\x0f\x42\xc4", &*b"\x0f\x42\xc5", &*b"\x0f\x42\xc6", &*b"\x0f\x42\xc7", ];
+    const CMOVE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x44\xc0", &*b"\x0f\x44\xc1", &*b"\x0f\x44\xc2", &*b"\x0f\x44\xc3", &*b"\x0f\x44\xc4", &*b"\x0f\x44\xc5", &*b"\x0f\x44\xc6", &*b"\x0f\x44\xc7", ];
+    const CMOVG_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4f\xc0", &*b"\x0f\x4f\xc1", &*b"\x0f\x4f\xc2", &*b"\x0f\x4f\xc3", &*b"\x0f\x4f\xc4", &*b"\x0f\x4f\xc5", &*b"\x0f\x4f\xc6", &*b"\x0f\x4f\xc7", ];
+    const CMOVGE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4d\xc0", &*b"\x0f\x4d\xc1", &*b"\x0f\x4d\xc2", &*b"\x0f\x4d\xc3", &*b"\x0f\x4d\xc4", &*b"\x0f\x4d\xc5", &*b"\x0f\x4d\xc6", &*b"\x0f\x4d\xc7", ];
+    const CMOVL_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4c\xc0", &*b"\x0f\x4c\xc1", &*b"\x0f\x4c\xc2", &*b"\x0f\x4c\xc3", &*b"\x0f\x4c\xc4", &*b"\x0f\x4c\xc5", &*b"\x0f\x4c\xc6", &*b"\x0f\x4c\xc7", ];
+    const CMOVLE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4e\xc0", &*b"\x0f\x4e\xc1", &*b"\x0f\x4e\xc2", &*b"\x0f\x4e\xc3", &*b"\x0f\x4e\xc4", &*b"\x0f\x4e\xc5", &*b"\x0f\x4e\xc6", &*b"\x0f\x4e\xc7", ];
+    const CMOVNE_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x45\xc0", &*b"\x0f\x45\xc1", &*b"\x0f\x45\xc2", &*b"\x0f\x45\xc3", &*b"\x0f\x45\xc4", &*b"\x0f\x45\xc5", &*b"\x0f\x45\xc6", &*b"\x0f\x45\xc7", ];
+    const CMOVNO_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x41\xc0", &*b"\x0f\x41\xc1", &*b"\x0f\x41\xc2", &*b"\x0f\x41\xc3", &*b"\x0f\x41\xc4", &*b"\x0f\x41\xc5", &*b"\x0f\x41\xc6", &*b"\x0f\x41\xc7", ];
+    const CMOVNP_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4b\xc0", &*b"\x0f\x4b\xc1", &*b"\x0f\x4b\xc2", &*b"\x0f\x4b\xc3", &*b"\x0f\x4b\xc4", &*b"\x0f\x4b\xc5", &*b"\x0f\x4b\xc6", &*b"\x0f\x4b\xc7", ];
+    const CMOVNS_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x49\xc0", &*b"\x0f\x49\xc1", &*b"\x0f\x49\xc2", &*b"\x0f\x49\xc3", &*b"\x0f\x49\xc4", &*b"\x0f\x49\xc5", &*b"\x0f\x49\xc6", &*b"\x0f\x49\xc7", ];
+    const CMOVO_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x40\xc0", &*b"\x0f\x40\xc1", &*b"\x0f\x40\xc2", &*b"\x0f\x40\xc3", &*b"\x0f\x40\xc4", &*b"\x0f\x40\xc5", &*b"\x0f\x40\xc6", &*b"\x0f\x40\xc7", ];
+    const CMOVP_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x4a\xc0", &*b"\x0f\x4a\xc1", &*b"\x0f\x4a\xc2", &*b"\x0f\x4a\xc3", &*b"\x0f\x4a\xc4", &*b"\x0f\x4a\xc5", &*b"\x0f\x4a\xc6", &*b"\x0f\x4a\xc7", ];
+    const CMOVS_EAX_EXX: [&[u8]; 8] = [&*b"\x0f\x48\xc0", &*b"\x0f\x48\xc1", &*b"\x0f\x48\xc2", &*b"\x0f\x48\xc3", &*b"\x0f\x48\xc4", &*b"\x0f\x48\xc5", &*b"\x0f\x48\xc6", &*b"\x0f\x48\xc7", ];
 
-    #[repr(C)]
     #[derive(Debug, Clone, Copy)]
-    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, CmovleEax, Imul, LoadEax, StoreEax }
+    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, Imul, LoadEax, StoreEax, CmovCcEax(X86ConditionCode) }
 
     impl GadgetKind {
-        pub fn all_values() -> [GadgetKind; 11] {
+        pub fn all_values() -> Vec<GadgetKind> {
             use GadgetKind::*;
-            [AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, CmovleEax, Imul, LoadEax, StoreEax]
+            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, Imul, LoadEax, StoreEax];
+            for cc in &X86ConditionCode::all_values() {
+                if *cc != X86ConditionCode::RCX {
+                    ret.push(CmovCcEax(*cc));
+                }
+            }
+            ret
         }
         pub fn gadgets_by_register(&self) -> [&'static [u8]; 8] {
-            [ADD_ESP_EXX, SUB_ESP_EXX, POP_EXX, ADD_EAX_EXX, SUB_EAX_EXX, XOR_EAX_EXX, XCHG_EAX_EXX, CMOVLE_EAX_EXX, IMUL_EXX, LOAD_EXX_EAX, STORE_EAX_EXX][*self as usize]
+            use GadgetKind::*; use X86ConditionCode::*;
+            match *self {
+                AddEsp => ADD_ESP_EXX,
+                SubEsp => SUB_ESP_EXX,
+                Pop => POP_EXX,
+                AddEax => ADD_EAX_EXX,
+                SubEax => SUB_EAX_EXX,
+                XorEax => XOR_EAX_EXX,
+                XchgEax => XCHG_EAX_EXX,
+                Imul => IMUL_EXX,
+                LoadEax => LOAD_EXX_EAX,
+                StoreEax => STORE_EAX_EXX,
+                CmovCcEax(Above) => CMOVA_EAX_EXX,
+                CmovCcEax(AboveEq) => CMOVAE_EAX_EXX,
+                CmovCcEax(Below) => CMOVB_EAX_EXX,
+                CmovCcEax(BelowEq) => CMOVBE_EAX_EXX,
+                CmovCcEax(Carry) => CMOVC_EAX_EXX,
+                CmovCcEax(RCX) => panic!("sadly, cmovrcx doesn't exist to parallel jrcx"),
+                CmovCcEax(Eq) => CMOVE_EAX_EXX,
+                CmovCcEax(Greater) => CMOVG_EAX_EXX,
+                CmovCcEax(GreaterEq) => CMOVGE_EAX_EXX,
+                CmovCcEax(Less) => CMOVL_EAX_EXX,
+                CmovCcEax(LessEq) => CMOVLE_EAX_EXX,
+                CmovCcEax(NotEq,) => CMOVNE_EAX_EXX,
+                CmovCcEax(NotOverflow) => CMOVNO_EAX_EXX,
+                CmovCcEax(NotParity) => CMOVNP_EAX_EXX,
+                CmovCcEax(NotSign) => CMOVNS_EAX_EXX,
+                CmovCcEax(Overflow) => CMOVO_EAX_EXX,
+                CmovCcEax(Parity) => CMOVP_EAX_EXX,
+                CmovCcEax(Sign) => CMOVS_EAX_EXX,
+            }
         }
     }
 
     lazy_static! {
         pub static ref ALL_GADGETS: Vec<&'static [u8]> = {
             let mut ret = Vec::new();
-            for gadget_set in &[ADD_ESP_EXX, SUB_ESP_EXX, POP_EXX, ADD_EAX_EXX, SUB_EAX_EXX, XOR_EAX_EXX, XCHG_EAX_EXX, CMOVLE_EAX_EXX, IMUL_EXX, LOAD_EXX_EAX, STORE_EAX_EXX] {
-                for gadget in gadget_set {
+            for gadget_kind in &GadgetKind::all_values() {
+                for gadget in &gadget_kind.gadgets_by_register() {
                     ret.push(*gadget);
                 }
             }
@@ -120,10 +176,19 @@ pub mod x86_instructions {
         }
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum X86ConditionCode {
         Above, AboveEq, Below, BelowEq, Carry, RCX, Eq, Greater, GreaterEq, Less, LessEq, NotEq,
         NotOverflow, NotParity, NotSign, Overflow, Parity, Sign,
+    }
+
+    impl X86ConditionCode {
+        pub fn all_values() -> [X86ConditionCode; 18] {
+            use X86ConditionCode::*;
+            [Above, AboveEq, Below, BelowEq, Carry, RCX, Eq, Greater, GreaterEq, Less, LessEq, NotEq,
+            NotOverflow, NotParity, NotSign, Overflow, Parity, Sign]
+        }
     }
 }
 pub mod gadget_search {
@@ -132,9 +197,14 @@ pub mod gadget_search {
     pub fn find_gadgets<'gadgets>(binary: &[u8], goals: &[&'gadgets [u8]]) -> BTreeMap<&'gadgets [u8], Vec<usize>> {
         let mut ret = BTreeMap::new();
         for goal in goals.iter() {
-            for (i, bytes) in binary.windows(goal.len()).enumerate() {
-                if bytes == *goal && binary[i+goal.len()] == 0xc3 {
-                    ret.entry(*goal).or_insert_with(|| vec![]).push(i);
+            let n = goal.len();
+            for (i, bytes) in binary.windows(n).enumerate() {
+                let acceptable_suffixes: &[&[u8]] = &[&*b"\xc3", &*b"\x90\xc3", &*b"\x90\x90\xc3"];
+                if bytes == *goal {
+                    //println!("{:?}", &binary[i..i+n+5]);
+                    if acceptable_suffixes.iter().any(|s| { &binary[i+n..i+n+s.len()] == *s }) {
+                        ret.entry(*goal).or_insert_with(|| vec![]).push(i);
+                    }
                 }
             }
         }
