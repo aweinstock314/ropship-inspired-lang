@@ -144,15 +144,18 @@ pub mod gadget_search {
     impl<'a, 'b> fmt::Display for ViewGadgetsAsChart<'a, 'b> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             use super::x86_instructions::{GadgetKind, X86Reg};
-            write!(f, "\n{:>8}", "")?;
-            for kind in &GadgetKind::all_values() {
-                write!(f, "{:>16}", format!("{:?}", kind))?;
+            let max_kind_width = GadgetKind::all_values().iter().fold(0, |w, k| w.max(format!("{:?}", k).len()));
+            write!(f, "\n{:>w$}", "", w=max_kind_width+1)?;
+            for reg in &X86Reg::all_values() {
+                let regstr = format!("{:?}", reg);
+                write!(f, "{:>width$}", regstr, width=regstr.len()+1)?;
             }
             write!(f, "\n")?;
-            for reg in &X86Reg::all_values() {
-                write!(f, "{:>8}", format!("{:?}", reg))?;
-                for kind in &GadgetKind::all_values() {
-                    write!(f, "{:>16}", self.0.contains_key(kind.gadgets_by_register()[*reg as usize]))?;
+            for kind in &GadgetKind::all_values() {
+                write!(f, "{:>w$}", format!("{:?}", kind), w=max_kind_width+1)?;
+                for reg in &X86Reg::all_values() {
+                    let regstr = format!("{:?}", reg);
+                    write!(f, "{:>width$}", self.0.contains_key(kind.gadgets_by_register()[*reg as usize]) as u8, width=regstr.len()+1)?;
                 }
                 write!(f, "\n")?;
             }
