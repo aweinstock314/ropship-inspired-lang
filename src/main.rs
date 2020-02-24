@@ -1,3 +1,4 @@
+#[macro_use] extern crate lazy_static;
 #[macro_use] extern crate pest_derive;
 use pest::Parser;
 
@@ -81,14 +82,82 @@ pub mod x86_instructions {
     const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
 
     #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
+    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, CmovleEax, Imul, LoadEax, StoreEax }
+
+    impl GadgetKind {
+        pub fn all_values() -> [GadgetKind; 11] {
+            use GadgetKind::*;
+            [AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, CmovleEax, Imul, LoadEax, StoreEax]
+        }
+        pub fn gadgets_by_register(&self) -> [&'static [u8]; 8] {
+            [ADD_ESP_EXX, SUB_ESP_EXX, POP_EXX, ADD_EAX_EXX, SUB_EAX_EXX, XOR_EAX_EXX, XCHG_EAX_EXX, CMOVLE_EAX_EXX, IMUL_EXX, LOAD_EXX_EAX, STORE_EAX_EXX][*self as usize]
+        }
+    }
+
+    lazy_static! {
+        pub static ref ALL_GADGETS: Vec<&'static [u8]> = {
+            let mut ret = Vec::new();
+            for gadget_set in &[ADD_ESP_EXX, SUB_ESP_EXX, POP_EXX, ADD_EAX_EXX, SUB_EAX_EXX, XOR_EAX_EXX, XCHG_EAX_EXX, CMOVLE_EAX_EXX, IMUL_EXX, LOAD_EXX_EAX, STORE_EAX_EXX] {
+                for gadget in gadget_set {
+                    ret.push(*gadget);
+                }
+            }
+            ret
+        };
+    }
+
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy)]
     pub enum X86Reg {
         EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
+    }
+
+    impl X86Reg {
+        pub fn all_values() -> [X86Reg; 8] {
+            use X86Reg::*;
+            [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI]
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
     pub enum X86ConditionCode {
         Above, AboveEq, Below, BelowEq, Carry, RCX, Eq, Greater, GreaterEq, Less, LessEq, NotEq,
         NotOverflow, NotParity, NotSign, Overflow, Parity, Sign,
+    }
+}
+pub mod gadget_search {
+    use std::collections::BTreeMap;
+    use std::fmt;
+    pub fn find_gadgets<'gadgets>(binary: &[u8], goals: &[&'gadgets [u8]]) -> BTreeMap<&'gadgets [u8], Vec<usize>> {
+        let mut ret = BTreeMap::new();
+        for goal in goals.iter() {
+            for (i, bytes) in binary.windows(goal.len()).enumerate() {
+                if bytes == *goal && binary[i+goal.len()] == 0xc3 {
+                    ret.entry(*goal).or_insert_with(|| vec![]).push(i);
+                }
+            }
+        }
+        ret
+    }
+    pub struct ViewGadgetsAsChart<'a, 'b>(pub &'a BTreeMap<&'b [u8], Vec<usize>>);
+    impl<'a, 'b> fmt::Display for ViewGadgetsAsChart<'a, 'b> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            use super::x86_instructions::{GadgetKind, X86Reg};
+            write!(f, "\n{:>8}", "")?;
+            for kind in &GadgetKind::all_values() {
+                write!(f, "{:>16}", format!("{:?}", kind))?;
+            }
+            write!(f, "\n")?;
+            for reg in &X86Reg::all_values() {
+                write!(f, "{:>8}", format!("{:?}", reg))?;
+                for kind in &GadgetKind::all_values() {
+                    write!(f, "{:>16}", self.0.contains_key(kind.gadgets_by_register()[*reg as usize]))?;
+                }
+                write!(f, "\n")?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -311,4 +380,15 @@ fn main() {
             println!("stackish program: {}", prog);
         }
     }
+    let bin_ls_bytes = include_bytes!("/bin/ls");
+    let gadgets_ls = gadget_search::find_gadgets(bin_ls_bytes, &x86_instructions::ALL_GADGETS);
+    println!("gadgets in /bin/ls: {}", gadget_search::ViewGadgetsAsChart(&gadgets_ls));
+
+    let bin_bash_bytes = include_bytes!("/bin/bash");
+    let gadgets_bash = gadget_search::find_gadgets(bin_bash_bytes, &x86_instructions::ALL_GADGETS);
+    println!("gadgets in /bin/bash: {}", gadget_search::ViewGadgetsAsChart(&gadgets_bash));
+
+    let libc_bytes = include_bytes!("/lib/x86_64-linux-gnu/libc.so.6");
+    let gadgets_libc = gadget_search::find_gadgets(libc_bytes, &x86_instructions::ALL_GADGETS);
+    println!("gadgets in libc: {}", gadget_search::ViewGadgetsAsChart(&gadgets_libc));
 }
