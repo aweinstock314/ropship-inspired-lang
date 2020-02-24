@@ -82,12 +82,15 @@ pub mod x86_instructions {
     include!("cmov_gadgets.generated.rs");
 
     #[derive(Debug, Clone, Copy)]
-    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, XchgEax, XchgEsi, XchgEdi, CmovCcEax(X86ConditionCode) }
+    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, Xchg(X86Reg), CmovCcEax(X86ConditionCode) }
 
     impl GadgetKind {
         pub fn all_values() -> Vec<GadgetKind> {
             use GadgetKind::*;
-            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, XchgEax, XchgEsi, XchgEdi];
+            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax];
+            for reg in &X86Reg::all_values() {
+                ret.push(Xchg(*reg));
+            }
             for cc in &X86ConditionCode::all_values() {
                 if *cc != X86ConditionCode::RCX {
                     ret.push(CmovCcEax(*cc));
@@ -107,9 +110,14 @@ pub mod x86_instructions {
                 Imul => IMUL_EXX,
                 LoadEax => LOAD_EXX_EAX,
                 StoreEax => STORE_EAX_EXX,
-                XchgEax => XCHG_EAX_EXX,
-                XchgEsi => XCHG_ESI_EXX,
-                XchgEdi => XCHG_EDI_EXX,
+                Xchg(X86Reg::EAX) => XCHG_EAX_EXX,
+                Xchg(X86Reg::ECX) => XCHG_ECX_EXX,
+                Xchg(X86Reg::EDX) => XCHG_EDX_EXX,
+                Xchg(X86Reg::EBX) => XCHG_EBX_EXX,
+                Xchg(X86Reg::ESP) => XCHG_ESP_EXX,
+                Xchg(X86Reg::EBP) => XCHG_EBP_EXX,
+                Xchg(X86Reg::ESI) => XCHG_ESI_EXX,
+                Xchg(X86Reg::EDI) => XCHG_EDI_EXX,
                 CmovCcEax(Above) => CMOVA_EAX_EXX,
                 CmovCcEax(AboveEq) => CMOVAE_EAX_EXX,
                 CmovCcEax(Below) => CMOVB_EAX_EXX,

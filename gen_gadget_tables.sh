@@ -1,6 +1,6 @@
 #!/bin/bash
 
-(for dst in {EAX,ESI,EDI}; do
+(for dst in {EAX,ECX,EDX,EBX,ESP,EBP,ESI,EDI}; do
     echo -n "const XCHG_${dst}_EXX: [&[u8]; 8] = [";
         (for reg in {eax,ecx,edx,ebx,esp,ebp,esi,edi}; do
             rasm2 "xchg $dst, $reg" | sed 's/\(..\)/\\x\1/g; s/^.*$/\&*b"\0",/';
