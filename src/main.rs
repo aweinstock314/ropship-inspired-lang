@@ -75,19 +75,19 @@ pub mod x86_instructions {
     const ADD_EAX_EXX: [&[u8]; 8] = [&*b"\x01\xc0", &*b"\x01\xc8", &*b"\x01\xd0", &*b"\x01\xd8", &*b"\x01\xe0", &*b"\x01\xe8", &*b"\x01\xf0", &*b"\x01\xf8"];
     const SUB_EAX_EXX: [&[u8]; 8] = [&*b"\x29\xc0", &*b"\x29\xc8", &*b"\x29\xd0", &*b"\x29\xd8", &*b"\x29\xe0", &*b"\x29\xe8", &*b"\x29\xf0", &*b"\x29\xf8"];
     const XOR_EAX_EXX: [&[u8]; 8] = [&*b"\x31\xc0", &*b"\x31\xc8", &*b"\x31\xd0", &*b"\x31\xd8", &*b"\x31\xe0", &*b"\x31\xe8", &*b"\x31\xf0", &*b"\x31\xf8"];
-    const XCHG_EAX_EXX: [&[u8]; 8] = [&*b"\x90", &*b"\x91", &*b"\x92", &*b"\x93", &*b"\x94", &*b"\x95", &*b"\x96", &*b"\x97"];
     const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
     const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"]; // "mov $reg, dword [eax]"
     const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
+    include!("xchg_gadgets.generated.rs");
     include!("cmov_gadgets.generated.rs");
 
     #[derive(Debug, Clone, Copy)]
-    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, Imul, LoadEax, StoreEax, CmovCcEax(X86ConditionCode) }
+    pub enum GadgetKind { AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, XchgEax, XchgEsi, XchgEdi, CmovCcEax(X86ConditionCode) }
 
     impl GadgetKind {
         pub fn all_values() -> Vec<GadgetKind> {
             use GadgetKind::*;
-            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, XchgEax, Imul, LoadEax, StoreEax];
+            let mut ret = vec![AddEsp, SubEsp, Pop, AddEax, SubEax, XorEax, Imul, LoadEax, StoreEax, XchgEax, XchgEsi, XchgEdi];
             for cc in &X86ConditionCode::all_values() {
                 if *cc != X86ConditionCode::RCX {
                     ret.push(CmovCcEax(*cc));
@@ -104,10 +104,12 @@ pub mod x86_instructions {
                 AddEax => ADD_EAX_EXX,
                 SubEax => SUB_EAX_EXX,
                 XorEax => XOR_EAX_EXX,
-                XchgEax => XCHG_EAX_EXX,
                 Imul => IMUL_EXX,
                 LoadEax => LOAD_EXX_EAX,
                 StoreEax => STORE_EAX_EXX,
+                XchgEax => XCHG_EAX_EXX,
+                XchgEsi => XCHG_ESI_EXX,
+                XchgEdi => XCHG_EDI_EXX,
                 CmovCcEax(Above) => CMOVA_EAX_EXX,
                 CmovCcEax(AboveEq) => CMOVAE_EAX_EXX,
                 CmovCcEax(Below) => CMOVB_EAX_EXX,
