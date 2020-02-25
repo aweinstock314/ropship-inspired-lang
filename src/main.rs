@@ -177,21 +177,19 @@ pub mod x86_instructions {
 pub mod gadget_search {
     use std::collections::BTreeMap;
     use std::fmt;
-    pub fn find_gadgets<'gadgets>(binary: &[u8], goals: &[&'gadgets [u8]]) -> BTreeMap<&'gadgets [u8], Vec<usize>> {
-        let mut ret = BTreeMap::new();
+    pub fn find_gadgets<'gadgets>(gadgets: &mut BTreeMap<&'gadgets [u8], Vec<usize>>, section: &[u8], section_offset: usize, goals: &[&'gadgets [u8]]) {
         for goal in goals.iter() {
             let n = goal.len();
-            for (i, bytes) in binary.windows(n).enumerate() {
+            for (i, bytes) in section.windows(n).enumerate() {
                 let acceptable_suffixes: &[&[u8]] = &[&*b"\xc3", &*b"\x90\xc3", &*b"\x90\x90\xc3"];
                 if bytes == *goal {
-                    //println!("{:?}", &binary[i..i+n+5]);
-                    if acceptable_suffixes.iter().any(|s| { &binary[i+n..i+n+s.len()] == *s }) {
-                        ret.entry(*goal).or_insert_with(|| vec![]).push(i);
+                    //println!("{:?}", &section[i..i+n+5]);
+                    if acceptable_suffixes.iter().any(|s| { &section[i+n..i+n+s.len()] == *s }) {
+                        gadgets.entry(*goal).or_insert_with(|| vec![]).push(section_offset+i);
                     }
                 }
             }
         }
-        ret
     }
     pub struct ViewGadgetsAsChart<'a, 'b>(pub &'a BTreeMap<&'b [u8], Vec<usize>>);
     impl<'a, 'b> fmt::Display for ViewGadgetsAsChart<'a, 'b> {
@@ -444,15 +442,27 @@ fn main() {
             println!("stackish program: {}", prog);
         }
     }
-    let bin_ls_bytes = include_bytes!("/bin/ls");
-    let gadgets_ls = gadget_search::find_gadgets(bin_ls_bytes, &x86_instructions::ALL_GADGETS);
-    println!("gadgets in /bin/ls: {}", gadget_search::ViewGadgetsAsChart(&gadgets_ls));
 
-    let bin_bash_bytes = include_bytes!("/bin/bash");
-    let gadgets_bash = gadget_search::find_gadgets(bin_bash_bytes, &x86_instructions::ALL_GADGETS);
-    println!("gadgets in /bin/bash: {}", gadget_search::ViewGadgetsAsChart(&gadgets_bash));
-
-    let libc_bytes = include_bytes!("/lib/x86_64-linux-gnu/libc.so.6");
-    let gadgets_libc = gadget_search::find_gadgets(libc_bytes, &x86_instructions::ALL_GADGETS);
-    println!("gadgets in libc: {}", gadget_search::ViewGadgetsAsChart(&gadgets_libc));
+    use std::fs::File;
+    use std::io::Read;
+    use std::collections::BTreeMap;
+    for path in &["/bin/ls", "/bin/bash", "/lib/x86_64-linux-gnu/libc.so.6"] {
+        let mut file = File::open(path).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        let elf = goblin::elf::Elf::parse(&bytes).unwrap();
+        let mut gadgets = BTreeMap::new();
+        for phdr in &elf.program_headers {
+            if phdr.is_executable() {
+                let range = phdr.file_range();
+                gadget_search::find_gadgets(&mut gadgets, &bytes[range.clone()], range.start, &x86_instructions::ALL_GADGETS);
+            }
+        }
+        println!("ELF-aware gadgets for {}: {}", path, gadget_search::ViewGadgetsAsChart(&gadgets));
+        let mut raw_gadgets = BTreeMap::new();
+        gadget_search::find_gadgets(&mut raw_gadgets, &bytes, 0, &x86_instructions::ALL_GADGETS);
+        if raw_gadgets != gadgets {
+            println!("ELF-unaware gadgets for {}: {}", path, gadget_search::ViewGadgetsAsChart(&raw_gadgets));
+        }
+    }
 }

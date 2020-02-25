@@ -5,6 +5,7 @@ authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+goblin = "0.2"
 pest = "2.1"
 pest_derive = "2.1"
 lazy_static = "1.4.0"
