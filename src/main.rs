@@ -226,20 +226,30 @@ pub mod gadget_search {
 pub mod high_level_eval;
 
 pub mod stackish_machine {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::{self, Display, Formatter};
     use std::iter::FromIterator;
+    use std::ops::Range;
     use super::abstract_syntax::*;
     use super::x86_instructions::X86ConditionCode;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-    pub struct InstructionAddress(usize);
-    #[derive(Debug, Clone, Copy)]
+    pub struct BasicBlockIndex(usize);
+    /// InstructionAddresses are (which basic block, index into basic block)
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct InstructionAddress(BasicBlockIndex, usize);
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum RegisterNumber {
         InstructionPointer,
         Accumulator,
         GeneralPurpose(usize),
         ArgumentNumber(usize), // codegen these to be compatible with x86 ABI?
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Location {
+        Reg(RegisterNumber),
+        RelMem(isize),
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -253,8 +263,8 @@ pub mod stackish_machine {
     #[derive(Debug, Clone)]
     pub enum StackishOp<A> {
         Nop,
-        Jump(InstructionAddress),
-        ConditionalBranch(X86ConditionCode, InstructionAddress), // CMOVcc rsp, resolved_addr
+        Jump(BasicBlockIndex),
+        ConditionalBranch(X86ConditionCode, BasicBlockIndex), // CMOVcc rsp, resolved_addr
         LoadImmediate(RegisterNumber, u64),
         ArithAccumReg(ArithKind, RegisterNumber),
         LoadAccum(RegisterNumber),
@@ -276,8 +286,8 @@ pub mod stackish_machine {
 
     #[derive(Debug)]
     pub struct StackishProgram {
-        basic_blocks: BTreeMap<InstructionAddress, Vec<StackishOp<HigherLevelOps>>>,
-        current_bb: InstructionAddress,
+        basic_blocks: BTreeMap<BasicBlockIndex, Vec<StackishOp<HigherLevelOps>>>,
+        current_bb: BasicBlockIndex,
         vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
         type_ctx: BTreeMap<String, TypeId>,
         next_var_offset: isize,
@@ -306,8 +316,8 @@ pub mod stackish_machine {
     impl StackishProgram {
         pub fn new() -> StackishProgram {
             StackishProgram {
-                basic_blocks: BTreeMap::from_iter(vec![(InstructionAddress(0), vec![])]),
-                current_bb: InstructionAddress(0),
+                basic_blocks: BTreeMap::from_iter(vec![(BasicBlockIndex(0), vec![])]),
+                current_bb: BasicBlockIndex(0),
                 vars_from_start: BTreeMap::new(),
                 type_ctx: BTreeMap::new(),
                 next_var_offset: -ZONE_BETWEEN_VARS_AND_PROG,
@@ -327,7 +337,7 @@ pub mod stackish_machine {
         pub fn extend_current_bb(&mut self, ops: &[StackishOp<HigherLevelOps>]) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().extend_from_slice(ops);
         }
-        pub fn start_basic_block(&mut self) -> InstructionAddress {
+        pub fn start_basic_block(&mut self) -> BasicBlockIndex {
             self.current_bb.0 += 1;
             self.basic_blocks.insert(self.current_bb, vec![]);
             self.current_bb
@@ -416,6 +426,61 @@ pub mod stackish_machine {
             translate_stmt(prog, stmt);
         }
     }
+
+    #[derive(Debug)]
+    pub struct DefUseInfo {
+        defs: BTreeMap<InstructionAddress, BTreeSet<Location>>,
+        uses: BTreeMap<InstructionAddress, BTreeSet<Location>>,
+    }
+    pub fn mapset_insert<K: Ord, V: Ord>(map: &mut BTreeMap<K, BTreeSet<V>>, key: K, val: V) {
+        map.entry(key).or_insert_with(|| BTreeSet::new()).insert(val);
+    }
+
+    pub fn compute_def_use(prog: &StackishProgram) -> DefUseInfo {
+        let mut defuse = DefUseInfo { defs: BTreeMap::new(), uses: BTreeMap::new() };
+        for (bb, block) in &prog.basic_blocks {
+            for (i, inst) in block.iter().enumerate() {
+                use StackishOp::*; use HigherLevelOps::*;
+                let inst_addr = InstructionAddress(*bb, i);
+                let assignment = |defuse: &mut DefUseInfo, dst, src| {
+                    mapset_insert(&mut defuse.defs, inst_addr, dst);
+                    mapset_insert(&mut defuse.uses, inst_addr, src);
+                };
+                match inst {
+                    Nop => {},
+                    Jump(_) => {},
+                    ConditionalBranch(_, _) => {}, // TODO: do we need a def-use pseudoregister for flags?
+                    LoadImmediate(reg, _) => { mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg)); },
+                    ArithAccumReg(kind, reg) => {
+                        use ArithKind::*;
+                        assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg));
+                        mapset_insert(&mut defuse.uses, inst_addr, Location::Reg(RegisterNumber::Accumulator));
+                        match kind {
+                            Add | Sub | Mul | Xor | CMovLe => {
+                                // only the common ones from above
+                            }
+                            Swap => {
+                                // swap also writes to the rhs
+                                mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg));
+                            }
+                        }
+                    },
+                    // TODO: do load and store need to also model the def-use-ness of stack-allocated vars?
+                    // if so, need an overapproximation of points-to for {Load,Store}Accum rhs's
+                    LoadAccum(reg) => { assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg)); },
+                    StoreAccum(reg) => { assignment(&mut defuse, Location::Reg(*reg), Location::Reg(RegisterNumber::Accumulator)); },
+                    Syscall => {},
+                    Extra(MovRegReg(dst, src)) => { assignment(&mut defuse, Location::Reg(*dst), Location::Reg(*src)); },
+                    Extra(StoreStartRelative(offset, reg)) => { assignment(&mut defuse, Location::RelMem(*offset), Location::Reg(*reg)); },
+                    Extra(LoadStartRelative(reg, offset)) => { assignment(&mut defuse, Location::Reg(*reg), Location::RelMem(*offset)); },
+                }
+            }
+        }
+        defuse
+    }
+
+    /*pub fn compute_liveness(prog: &StackishProgram) -> BTreeMap<Location, Range<InstructionAddress>> {
+    }*/
 }
 
 fn main() {
@@ -440,6 +505,8 @@ fn main() {
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
             println!("stackish program: {}", prog);
+            let defuse = compute_def_use(&prog);
+            println!("defuse info: {:?}", defuse);
         }
     }
 
@@ -459,10 +526,12 @@ fn main() {
             }
         }
         println!("ELF-aware gadgets for {}: {}", path, gadget_search::ViewGadgetsAsChart(&gadgets));
-        let mut raw_gadgets = BTreeMap::new();
-        gadget_search::find_gadgets(&mut raw_gadgets, &bytes, 0, &x86_instructions::ALL_GADGETS);
-        if raw_gadgets != gadgets {
-            println!("ELF-unaware gadgets for {}: {}", path, gadget_search::ViewGadgetsAsChart(&raw_gadgets));
+        #[cfg(feature="also_check_raw_gadgets")] {
+            let mut raw_gadgets = BTreeMap::new();
+            gadget_search::find_gadgets(&mut raw_gadgets, &bytes, 0, &x86_instructions::ALL_GADGETS);
+            if raw_gadgets != gadgets {
+                println!("ELF-unaware gadgets for {}: {}", path, gadget_search::ViewGadgetsAsChart(&raw_gadgets));
+            }
         }
     }
 }

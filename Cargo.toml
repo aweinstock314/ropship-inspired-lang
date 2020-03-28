@@ -9,3 +9,6 @@ goblin = "0.2"
 pest = "2.1"
 pest_derive = "2.1"
 lazy_static = "1.4.0"
+
+[features]
+also_check_raw_gadgets = []
