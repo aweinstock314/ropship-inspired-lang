@@ -513,41 +513,56 @@ pub mod stackish_machine {
         type Index;
         type Fact: Eq+Clone;
         fn bottom() -> Self::Fact;
-        fn join(x: &Self::Fact, y: &Self::Fact) -> Self::Fact;
+        fn join(x: &mut Self::Fact, y: &Self::Fact);
         fn transfer(ctx: &Self::Context, idx: &Self::Index, x: Self::Fact) -> Self::Fact;
     }
+
     pub struct LivenessAnalysis;
     impl DataflowLattice for LivenessAnalysis {
         type Context = DefUseInfo;
         type Index = InstructionAddress;
-        type Fact = BTreeMap<InstructionAddress, BTreeSet<Location>>;
-        fn bottom() -> Self::Fact { BTreeMap::new() }
-        fn join(x: &Self::Fact, y: &Self::Fact) -> Self::Fact {
-            let mut ret = Self::bottom();
+        type Fact = BTreeSet<Location>;
+        fn bottom() -> Self::Fact { BTreeSet::new() }
+        fn join(x: &mut Self::Fact, y: &Self::Fact) {
+            /*let mut ret = Self::bottom();
             for (k, v) in x.iter() { ret.entry(k.clone()).or_insert_with(|| BTreeSet::new()).extend(v.clone()); }
             for (k, v) in y.iter() { ret.entry(k.clone()).or_insert_with(|| BTreeSet::new()).extend(v.clone()); }
-            ret
+            ret*/
+            x.extend(y.iter().cloned())
         }
-        fn transfer(ctx: &DefUseInfo, idx: &InstructionAddress, x: Self::Fact) -> Self::Fact {
-            /*let mut diff = 
-            ctx.join(*/
-            unimplemented!()
+        fn transfer(ctx: &DefUseInfo, idx: &InstructionAddress, out_n: Self::Fact) -> Self::Fact {
+            /*let use_n: Self::Fact = ctx.uses.get(idx).unwrap_or(&BTreeSet::new()).iter().cloned().map(|loc| (*idx, loc)).collect();
+            let def_n: Self::Fact = ctx.defs.get(idx).unwrap_or(&BTreeSet::new()).iter().cloned().map(|loc| (*idx, loc)).collect();*/
+            let use_n = ctx.uses.get(idx).cloned().unwrap_or_else(|| BTreeSet::new());
+            let def_n = ctx.defs.get(idx).cloned().unwrap_or_else(|| BTreeSet::new());
+            let out_minus_def: Self::Fact = out_n.difference(&def_n).cloned().collect();
+            use_n.union(&out_minus_def).cloned().collect()
         }
     }
         
-    pub fn compute_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram, ctx: &D::Context) -> D::Fact {
-        /*let old_in = D::bottom();
-        let old_out = D::bottom();
+    pub fn compute_forwards_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram, ctx: &D::Context) -> (BTreeMap<D::Index, D::Fact>, BTreeMap<D::Index, D::Fact>) where D::Fact: std::fmt::Debug {
+        let mut old_in = BTreeMap::new();
+        let mut old_out = BTreeMap::new();
         loop {
-            let new_in = old_in.clone();
-            let new_out = old_out.clone();
-            for (bb, block) in &prog.basic_blocks {
-                for (i, inst) in block.iter().enumerate() {
-                    let inst_addr = InstructionAddress(*bb, i);
+            //println!("old_in: {:?}\nold_out: {:?}", old_in, old_out);
+            let mut new_in = old_in.clone();
+            let mut new_out = old_out.clone();
+            prog.for_each_instruction(|inst_addr, _| {
+                let in_n: &mut D::Fact = new_in.entry(inst_addr).or_insert_with(|| D::bottom());
+                D::join(in_n, &D::transfer(ctx, &inst_addr, old_out.get(&inst_addr).cloned().unwrap_or_else(|| D::bottom())));
+                for succ in prog.successors(inst_addr) {
+                    //let in_s = new_in.iter().filter_map(|(k, v)| if k == succ { Some((inst_addr, v)) } else { None }).collect();
+                    let in_s = new_in.get(&succ).cloned().unwrap_or_else(|| D::bottom());
+                    let out_n: &mut D::Fact = new_out.entry(inst_addr).or_insert_with(|| D::bottom());
+                    D::join(out_n, &in_s);
                 }
+            });
+            if new_in == old_in && new_out == old_out {
+                return (new_in, new_out);
             }
-        }*/
-        unimplemented!()
+            old_in = new_in;
+            old_out = new_out;
+        }
     }
 }
 
@@ -570,15 +585,25 @@ fn main() {
         }
         {
             use stackish_machine::*;
+            use std::collections::BTreeSet;
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
             println!("stackish program: {}", prog);
-            println!("Successors:");
+            /*println!("Successors:");
             prog.for_each_instruction(|inst_addr, inst| {
                 println!("\t{:?} {:?} {:?}", inst_addr, inst, prog.successors(inst_addr));
-            });
+            });*/
             let defuse = compute_def_use(&prog);
-            println!("defuse info: {:?}", defuse);
+            //println!("defuse info: {:?}", defuse);
+            let (live_in, live_out) = compute_forwards_dataflow::<LivenessAnalysis>(&prog, &defuse);
+            println!("live_in:");
+            for item in &live_in {
+                println!("\t{:?}", item);
+            }
+            println!("live_out:");
+            for item in &live_out {
+                println!("\t{:?}", item);
+            }
         }
     }
 
