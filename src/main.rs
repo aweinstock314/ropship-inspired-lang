@@ -229,12 +229,19 @@ pub mod stackish_machine {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::{self, Display, Formatter};
     use std::iter::FromIterator;
-    use std::ops::Range;
+    use std::ops;
     use super::abstract_syntax::*;
     use super::x86_instructions::X86ConditionCode;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct BasicBlockIndex(usize);
+    impl ops::Add<usize> for BasicBlockIndex {
+        type Output = BasicBlockIndex;
+        fn add(self, rhs: usize) -> BasicBlockIndex {
+            BasicBlockIndex(self.0 + rhs)
+        }
+    }
+
     /// InstructionAddresses are (which basic block, index into basic block)
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct InstructionAddress(BasicBlockIndex, usize);
@@ -346,6 +353,32 @@ pub mod stackish_machine {
             self.next_temp_register += 1;
             RegisterNumber::GeneralPurpose(self.next_temp_register)
         }
+        pub fn for_each_instruction<F: FnMut(InstructionAddress, &StackishOp<HigherLevelOps>)>(&self, mut f: F) {
+            for (bb, block) in &self.basic_blocks {
+                for (i, inst) in block.iter().enumerate() {
+                    f(InstructionAddress(*bb, i), inst);
+                }
+            }
+        }
+        pub fn successors(&self, node: InstructionAddress) -> BTreeSet<InstructionAddress> {
+            let bb = &self.basic_blocks[&node.0];
+            if node.1 == bb.len() - 1 {
+                let mut fallthrough = vec![];
+                if self.basic_blocks.contains_key(&(node.0+1)) {
+                    fallthrough.push(InstructionAddress(node.0+1, 0));
+                }
+                match bb[node.1] {
+                    StackishOp::Jump(next_bb) => BTreeSet::from_iter(vec![InstructionAddress(next_bb, 0)]),
+                    StackishOp::ConditionalBranch(_, next_bb) => { fallthrough.push(InstructionAddress(next_bb, 0)); BTreeSet::from_iter(fallthrough) }, 
+                    _ => { BTreeSet::from_iter(fallthrough) },
+                }
+            } else {
+                match bb[node.1] {
+                    StackishOp::Jump(_) | StackishOp::ConditionalBranch(_, _) => panic!("Jump/ConditionalBranch in the middle of basic block: {:?} {:?}", node, bb),
+                    _ => BTreeSet::from_iter(vec![InstructionAddress(node.0, node.1+1)]),
+                }
+            }
+        }
     }
     // TODO: should this take a register number (hence requiring translate_stmt to schedule all the registers?
     pub fn translate_expr(prog: &mut StackishProgram, expr: &Expr) -> RegisterNumber {
@@ -438,49 +471,84 @@ pub mod stackish_machine {
 
     pub fn compute_def_use(prog: &StackishProgram) -> DefUseInfo {
         let mut defuse = DefUseInfo { defs: BTreeMap::new(), uses: BTreeMap::new() };
-        for (bb, block) in &prog.basic_blocks {
-            for (i, inst) in block.iter().enumerate() {
-                use StackishOp::*; use HigherLevelOps::*;
-                let inst_addr = InstructionAddress(*bb, i);
-                let assignment = |defuse: &mut DefUseInfo, dst, src| {
-                    mapset_insert(&mut defuse.defs, inst_addr, dst);
-                    mapset_insert(&mut defuse.uses, inst_addr, src);
-                };
-                match inst {
-                    Nop => {},
-                    Jump(_) => {},
-                    ConditionalBranch(_, _) => {}, // TODO: do we need a def-use pseudoregister for flags?
-                    LoadImmediate(reg, _) => { mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg)); },
-                    ArithAccumReg(kind, reg) => {
-                        use ArithKind::*;
-                        assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg));
-                        mapset_insert(&mut defuse.uses, inst_addr, Location::Reg(RegisterNumber::Accumulator));
-                        match kind {
-                            Add | Sub | Mul | Xor | CMovLe => {
-                                // only the common ones from above
-                            }
-                            Swap => {
-                                // swap also writes to the rhs
-                                mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg));
-                            }
+        prog.for_each_instruction(|inst_addr, inst| {
+            use StackishOp::*; use HigherLevelOps::*;
+            let assignment = |defuse: &mut DefUseInfo, dst, src| {
+                mapset_insert(&mut defuse.defs, inst_addr, dst);
+                mapset_insert(&mut defuse.uses, inst_addr, src);
+            };
+            match inst {
+                Nop => {},
+                Jump(_) => {},
+                ConditionalBranch(_, _) => {}, // TODO: do we need a def-use pseudoregister for flags?
+                LoadImmediate(reg, _) => { mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg)); },
+                ArithAccumReg(kind, reg) => {
+                    use ArithKind::*;
+                    assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg));
+                    mapset_insert(&mut defuse.uses, inst_addr, Location::Reg(RegisterNumber::Accumulator));
+                    match kind {
+                        Add | Sub | Mul | Xor | CMovLe => {
+                            // only the common ones from above
                         }
-                    },
-                    // TODO: do load and store need to also model the def-use-ness of stack-allocated vars?
-                    // if so, need an overapproximation of points-to for {Load,Store}Accum rhs's
-                    LoadAccum(reg) => { assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg)); },
-                    StoreAccum(reg) => { assignment(&mut defuse, Location::Reg(*reg), Location::Reg(RegisterNumber::Accumulator)); },
-                    Syscall => {},
-                    Extra(MovRegReg(dst, src)) => { assignment(&mut defuse, Location::Reg(*dst), Location::Reg(*src)); },
-                    Extra(StoreStartRelative(offset, reg)) => { assignment(&mut defuse, Location::RelMem(*offset), Location::Reg(*reg)); },
-                    Extra(LoadStartRelative(reg, offset)) => { assignment(&mut defuse, Location::Reg(*reg), Location::RelMem(*offset)); },
-                }
+                        Swap => {
+                            // swap also writes to the rhs
+                            mapset_insert(&mut defuse.defs, inst_addr, Location::Reg(*reg));
+                        }
+                    }
+                },
+                // TODO: do load and store need to also model the def-use-ness of stack-allocated vars?
+                // if so, need an overapproximation of points-to for {Load,Store}Accum rhs's
+                LoadAccum(reg) => { assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg)); },
+                StoreAccum(reg) => { assignment(&mut defuse, Location::Reg(*reg), Location::Reg(RegisterNumber::Accumulator)); },
+                Syscall => {},
+                Extra(MovRegReg(dst, src)) => { assignment(&mut defuse, Location::Reg(*dst), Location::Reg(*src)); },
+                Extra(StoreStartRelative(offset, reg)) => { assignment(&mut defuse, Location::RelMem(*offset), Location::Reg(*reg)); },
+                Extra(LoadStartRelative(reg, offset)) => { assignment(&mut defuse, Location::Reg(*reg), Location::RelMem(*offset)); },
             }
-        }
+        });
         defuse
     }
-
-    /*pub fn compute_liveness(prog: &StackishProgram) -> BTreeMap<Location, Range<InstructionAddress>> {
-    }*/
+    pub trait DataflowLattice {
+        type Context;
+        type Index;
+        type Fact: Eq+Clone;
+        fn bottom() -> Self::Fact;
+        fn join(x: &Self::Fact, y: &Self::Fact) -> Self::Fact;
+        fn transfer(ctx: &Self::Context, idx: &Self::Index, x: Self::Fact) -> Self::Fact;
+    }
+    pub struct LivenessAnalysis;
+    impl DataflowLattice for LivenessAnalysis {
+        type Context = DefUseInfo;
+        type Index = InstructionAddress;
+        type Fact = BTreeMap<InstructionAddress, BTreeSet<Location>>;
+        fn bottom() -> Self::Fact { BTreeMap::new() }
+        fn join(x: &Self::Fact, y: &Self::Fact) -> Self::Fact {
+            let mut ret = Self::bottom();
+            for (k, v) in x.iter() { ret.entry(k.clone()).or_insert_with(|| BTreeSet::new()).extend(v.clone()); }
+            for (k, v) in y.iter() { ret.entry(k.clone()).or_insert_with(|| BTreeSet::new()).extend(v.clone()); }
+            ret
+        }
+        fn transfer(ctx: &DefUseInfo, idx: &InstructionAddress, x: Self::Fact) -> Self::Fact {
+            /*let mut diff = 
+            ctx.join(*/
+            unimplemented!()
+        }
+    }
+        
+    pub fn compute_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram, ctx: &D::Context) -> D::Fact {
+        /*let old_in = D::bottom();
+        let old_out = D::bottom();
+        loop {
+            let new_in = old_in.clone();
+            let new_out = old_out.clone();
+            for (bb, block) in &prog.basic_blocks {
+                for (i, inst) in block.iter().enumerate() {
+                    let inst_addr = InstructionAddress(*bb, i);
+                }
+            }
+        }*/
+        unimplemented!()
+    }
 }
 
 fn main() {
@@ -505,6 +573,10 @@ fn main() {
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
             println!("stackish program: {}", prog);
+            println!("Successors:");
+            prog.for_each_instruction(|inst_addr, inst| {
+                println!("\t{:?} {:?} {:?}", inst_addr, inst, prog.successors(inst_addr));
+            });
             let defuse = compute_def_use(&prog);
             println!("defuse info: {:?}", defuse);
         }
