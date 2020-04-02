@@ -570,6 +570,9 @@ pub mod stackish_machine {
 pub mod graph_algos;
 
 fn main() {
+    use std::fs::File;
+    use std::io::{Read, Write};
+
     let input_bytes = include_bytes!("../sum_input.ril");
     let input_string = String::from_utf8_lossy(&*input_bytes);
     let res = concrete_syntax::RILParser::parse(concrete_syntax::Rule::function, &input_string);
@@ -636,20 +639,23 @@ fn main() {
                     }
                 }
             }
-            println!("{:?}", Dot::with_config(&regalloc_graph, &[Config::EdgeNoLabel]));
+            let mut graphviz = format!("{:?}", Dot::with_config(&regalloc_graph, &[Config::EdgeNoLabel]));
             let coloring = graph_algos::brute_force_colors(&regalloc_graph, 4);
             println!("coloring: {:?}", coloring);
             if let Some(coloring) = coloring {
+                let mut replacement = "digraph {\n".to_string();
                 for i in 0..regalloc_graph.node_bound() {
                     static COLORS: &[&str] = &["red", "green", "blue", "purple"];
-                    println!("{} [ fillcolor = {}, style = filled ]", i, COLORS[coloring[i].0]);
+                    replacement += &format!("    {} [ fillcolor = {}, style = filled ]\n", i, COLORS[coloring[i].0]);
                 }
+                graphviz = graphviz.replace("digraph {", &replacement);
             }
+            let mut graphviz_file = File::create("reg_alloc.dot").unwrap();
+            graphviz_file.write(graphviz.as_bytes()).unwrap();
+            println!("Wrote reg_alloc.dot");
         }
     }
 
-    use std::fs::File;
-    use std::io::Read;
     use std::collections::BTreeMap;
     for path in &["/bin/ls", "/bin/bash", "/lib/x86_64-linux-gnu/libc.so.6"] {
         let mut file = File::open(path).unwrap();
