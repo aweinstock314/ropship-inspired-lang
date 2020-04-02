@@ -588,6 +588,7 @@ fn main() {
         }
         {
             use stackish_machine::*;
+            use petgraph::{Graph, dot::{Dot, Config}, visit::NodeIndexable};
             use std::collections::BTreeSet;
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
@@ -606,6 +607,43 @@ fn main() {
             println!("live_out:");
             for item in &live_out {
                 println!("\t{:?}", item);
+            }
+
+            let mut regalloc_graph = Graph::<_, ()>::new();
+            let mut regalloc_keys = BTreeMap::new();
+            for (_, v) in &live_in {
+                for x in v {
+                    if let Location::Reg(y) = x {
+                        if !regalloc_keys.contains_key(y) {
+                            let node = regalloc_graph.add_node(y);
+                            regalloc_keys.insert(y, node);
+                        }
+                    }
+                }
+            }
+            for (_, v) in &live_in {
+                for x in v {
+                    if let Location::Reg(x0) = x {
+                        for y in v {
+                            if let Location::Reg(y0) = y {
+                                let node_x = regalloc_keys[x0];
+                                let node_y = regalloc_keys[y0];
+                                if node_x != node_y {
+                                    regalloc_graph.update_edge(node_x, node_y, ());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            println!("{:?}", Dot::with_config(&regalloc_graph, &[Config::EdgeNoLabel]));
+            let coloring = graph_algos::brute_force_colors(&regalloc_graph, 4);
+            println!("coloring: {:?}", coloring);
+            if let Some(coloring) = coloring {
+                for i in 0..regalloc_graph.node_bound() {
+                    static COLORS: &[&str] = &["red", "green", "blue", "purple"];
+                    println!("{} [ fillcolor = {}, style = filled ]", i, COLORS[coloring[i].0]);
+                }
             }
         }
     }
