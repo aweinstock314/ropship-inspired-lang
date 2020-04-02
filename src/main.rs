@@ -401,7 +401,8 @@ pub mod stackish_machine {
                 prog.extend_current_bb(&[
                     // NOTE: clobbers accumulator
                     StackishOp::LoadAccum(tmp),
-                    StackishOp::ArithAccumReg(ArithKind::Swap, out),
+                    //StackishOp::ArithAccumReg(ArithKind::Swap, out),
+                    StackishOp::Extra(HigherLevelOps::MovRegReg(out, RegisterNumber::Accumulator)),
                 ]);
                 out
             },
@@ -565,6 +566,8 @@ pub mod stackish_machine {
         }
     }
 }
+
+pub mod graph_algos;
 
 fn main() {
     let input_bytes = include_bytes!("../sum_input.ril");
