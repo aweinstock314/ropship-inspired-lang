@@ -227,7 +227,7 @@ pub mod high_level_eval;
 
 pub mod stackish_machine {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::fmt::{self, Display, Formatter};
+    use std::fmt::{self, Debug, Display, Formatter};
     use std::iter::FromIterator;
     use std::ops;
     use super::abstract_syntax::*;
@@ -277,6 +277,7 @@ pub mod stackish_machine {
         LoadAccum(RegisterNumber),
         StoreAccum(RegisterNumber),
         Syscall,
+        MovRegReg(RegisterNumber, RegisterNumber),
         Extra(A),
     }
 
@@ -284,7 +285,6 @@ pub mod stackish_machine {
     /// they can be lowered to plain StackishOp's later
     #[derive(Debug, Clone)]
     pub enum HigherLevelOps {
-        MovRegReg(RegisterNumber, RegisterNumber),
         StoreStartRelative(isize, RegisterNumber),
         LoadStartRelative(RegisterNumber, isize),
     }
@@ -292,8 +292,8 @@ pub mod stackish_machine {
     const ZONE_BETWEEN_VARS_AND_PROG: isize = 0x100;
 
     #[derive(Debug)]
-    pub struct StackishProgram {
-        basic_blocks: BTreeMap<BasicBlockIndex, Vec<StackishOp<HigherLevelOps>>>,
+    pub struct StackishProgram<Ops> {
+        basic_blocks: BTreeMap<BasicBlockIndex, Vec<StackishOp<Ops>>>,
         current_bb: BasicBlockIndex,
         vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
         type_ctx: BTreeMap<String, TypeId>,
@@ -301,7 +301,7 @@ pub mod stackish_machine {
         next_temp_register: usize,
     }
 
-    impl Display for StackishProgram {
+    impl<Ops: Debug> Display for StackishProgram<Ops> {
         fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
             writeln!(fmt, "StackishProgram {{")?;
             writeln!(fmt, "variable offsets:")?;
@@ -320,8 +320,8 @@ pub mod stackish_machine {
         }
     }
 
-    impl StackishProgram {
-        pub fn new() -> StackishProgram {
+    impl<Ops: Clone + Debug> StackishProgram<Ops> {
+        pub fn new() -> StackishProgram<Ops> {
             StackishProgram {
                 basic_blocks: BTreeMap::from_iter(vec![(BasicBlockIndex(0), vec![])]),
                 current_bb: BasicBlockIndex(0),
@@ -331,19 +331,13 @@ pub mod stackish_machine {
                 next_temp_register: 0,
             }
         }
-        pub fn declare_value(&mut self, name: &str, ty: &TypeId, value: RegisterNumber) {
-            self.next_var_offset -= ty.size_in_bytes() as isize;
-            let addr = self.next_var_offset;
-            self.vars_from_start.insert(name.into(), addr);
-            self.type_ctx.insert(name.into(), ty.clone());
-            self.push_to_current_bb(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
-        }
-        pub fn push_to_current_bb(&mut self, op: StackishOp<HigherLevelOps>) {
+        pub fn push_to_current_bb(&mut self, op: StackishOp<Ops>) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().push(op);
         }
-        pub fn extend_current_bb(&mut self, ops: &[StackishOp<HigherLevelOps>]) {
+        pub fn extend_current_bb(&mut self, ops: &[StackishOp<Ops>]) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().extend_from_slice(ops);
         }
+
         pub fn start_basic_block(&mut self) -> BasicBlockIndex {
             self.current_bb.0 += 1;
             self.basic_blocks.insert(self.current_bb, vec![]);
@@ -353,7 +347,8 @@ pub mod stackish_machine {
             self.next_temp_register += 1;
             RegisterNumber::GeneralPurpose(self.next_temp_register)
         }
-        pub fn for_each_instruction<F: FnMut(InstructionAddress, &StackishOp<HigherLevelOps>)>(&self, mut f: F) {
+
+        pub fn for_each_instruction<F: FnMut(InstructionAddress, &StackishOp<Ops>)>(&self, mut f: F) {
             for (bb, block) in &self.basic_blocks {
                 for (i, inst) in block.iter().enumerate() {
                     f(InstructionAddress(*bb, i), inst);
@@ -380,8 +375,18 @@ pub mod stackish_machine {
             }
         }
     }
+
+    impl StackishProgram<HigherLevelOps> {
+        pub fn declare_value(&mut self, name: &str, ty: &TypeId, value: RegisterNumber) {
+            self.next_var_offset -= ty.size_in_bytes() as isize;
+            let addr = self.next_var_offset;
+            self.vars_from_start.insert(name.into(), addr);
+            self.type_ctx.insert(name.into(), ty.clone());
+            self.push_to_current_bb(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
+        }
+    }
     // TODO: should this take a register number (hence requiring translate_stmt to schedule all the registers?
-    pub fn translate_expr(prog: &mut StackishProgram, expr: &Expr) -> RegisterNumber {
+    pub fn translate_expr(prog: &mut StackishProgram<HigherLevelOps>, expr: &Expr) -> RegisterNumber {
         println!("translate expr {:?}: {:?}", expr, prog);
         match expr {
             Expr::Literal(s) => {
@@ -402,13 +407,13 @@ pub mod stackish_machine {
                     // NOTE: clobbers accumulator
                     StackishOp::LoadAccum(tmp),
                     //StackishOp::ArithAccumReg(ArithKind::Swap, out),
-                    StackishOp::Extra(HigherLevelOps::MovRegReg(out, RegisterNumber::Accumulator)),
+                    StackishOp::MovRegReg(out, RegisterNumber::Accumulator),
                 ]);
                 out
             },
         }
     }
-    pub fn translate_stmt(prog: &mut StackishProgram, stmt: &Statement) {
+    pub fn translate_stmt(prog: &mut StackishProgram<HigherLevelOps>, stmt: &Statement) {
         println!("translate stmt {:?}", stmt);
         match stmt {
             Statement::LocalDecl { ident, ty, initializer } => {
@@ -452,7 +457,7 @@ pub mod stackish_machine {
         }
     }
 
-    pub fn translate_function(prog: &mut StackishProgram, func: &FunctionDef) {
+    pub fn translate_function(prog: &mut StackishProgram<HigherLevelOps>, func: &FunctionDef) {
         for (i, (name, ty)) in func.args.iter().enumerate() {
             prog.declare_value(name, ty, RegisterNumber::ArgumentNumber(i));
         }
@@ -470,7 +475,7 @@ pub mod stackish_machine {
         map.entry(key).or_insert_with(|| BTreeSet::new()).insert(val);
     }
 
-    pub fn compute_def_use(prog: &StackishProgram) -> DefUseInfo {
+    pub fn compute_def_use(prog: &StackishProgram<HigherLevelOps>) -> DefUseInfo {
         let mut defuse = DefUseInfo { defs: BTreeMap::new(), uses: BTreeMap::new() };
         prog.for_each_instruction(|inst_addr, inst| {
             use StackishOp::*; use HigherLevelOps::*;
@@ -502,7 +507,7 @@ pub mod stackish_machine {
                 LoadAccum(reg) => { assignment(&mut defuse, Location::Reg(RegisterNumber::Accumulator), Location::Reg(*reg)); },
                 StoreAccum(reg) => { assignment(&mut defuse, Location::Reg(*reg), Location::Reg(RegisterNumber::Accumulator)); },
                 Syscall => {},
-                Extra(MovRegReg(dst, src)) => { assignment(&mut defuse, Location::Reg(*dst), Location::Reg(*src)); },
+                MovRegReg(dst, src) => { assignment(&mut defuse, Location::Reg(*dst), Location::Reg(*src)); },
                 Extra(StoreStartRelative(offset, reg)) => { assignment(&mut defuse, Location::RelMem(*offset), Location::Reg(*reg)); },
                 Extra(LoadStartRelative(reg, offset)) => { assignment(&mut defuse, Location::Reg(*reg), Location::RelMem(*offset)); },
             }
@@ -541,7 +546,7 @@ pub mod stackish_machine {
         }
     }
         
-    pub fn compute_forwards_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram, ctx: &D::Context) -> (BTreeMap<D::Index, D::Fact>, BTreeMap<D::Index, D::Fact>) where D::Fact: std::fmt::Debug {
+    pub fn compute_forwards_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram<HigherLevelOps>, ctx: &D::Context) -> (BTreeMap<D::Index, D::Fact>, BTreeMap<D::Index, D::Fact>) where D::Fact: std::fmt::Debug {
         let mut old_in = BTreeMap::new();
         let mut old_out = BTreeMap::new();
         loop {
