@@ -1,27 +1,38 @@
+#![warn(missing_docs)]
+//! ropship-inspired-language
+
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate pest_derive;
 use pest::Parser;
 
+/// The concrete syntax is parsed by pest, returning a concrete syntax tree containing span information for each grammar production
+#[allow(missing_docs)]
 pub mod concrete_syntax {
     #[derive(Parser)]
     #[grammar = "syntax.pest"]
     pub struct RILParser;
 }
 
+/// The AST is produced by traversing pest's CST, and is in a form convenient for typechecking and lowering into a stack-machine IR
 pub mod abstract_syntax {
+    /// The rust type of object language types
     #[derive(Debug, Clone)]
     pub enum TypeId {
+        /// Pointers to some other type
         Pointer(Box<TypeId>),
+        /// Register-sized words
         Word64,
     }
 
     impl TypeId {
+        /// How many bytes instances of this type occupy
         pub fn size_in_bytes(&self) -> usize {
             match self {
                 TypeId::Word64 => 8,
                 TypeId::Pointer(_) => 8,
             }
         }
+        /// Multiplier for additions to values of this type (so that `p += 1` works if `p` is a ptr)
         pub fn stride_to_increment(&self) -> usize {
             match self {
                 TypeId::Word64 => 1,
@@ -30,56 +41,86 @@ pub mod abstract_syntax {
         }
     }
 
+    /// Modifiers for compound assignments
     #[derive(Debug)]
     pub enum AssignmentModifier {
+        /// `=`
         Normal,
+        /// `+=`
         Add,
     }
 
+    /// Expressions of the object language
     #[derive(Debug)]
     pub enum Expr {
+        /// Literal integers
         Literal(String),
+        /// Dereferencing another expression
         Deref(Box<Expr>),
+        /// Variable lookups
         Var(String),
     }
 
+    /// Statements of the object language
+    #[allow(missing_docs)]
     #[derive(Debug)]
     pub enum Statement {
+        /// Variable declarations
         LocalDecl { ident: String, ty: TypeId, initializer: Expr },
+        /// "dotimes" loops
         DoTimes { amount: Expr, body: Vec<Statement> },
+        /// Compound assignment with a modifier
         Assignment { lhs: String, modifier: AssignmentModifier, rhs: Expr },
+        /// Return from a function
         Return { val: Expr },
     }
 
+    /// Function definitions
     #[derive(Debug)]
     pub struct FunctionDef {
+        /// The name of the function
         pub name: String,
+        /// The function's argument names and types
         pub args: Vec<(String, TypeId)>,
+        /// The return type of the function
         pub return_type: TypeId,
+        /// The statements in the function's body
         pub body: Vec<Statement>,
     }
 
+    /// Translation units
     #[derive(Debug)]
     pub struct TranslationUnit {
+        /// The functions in a translation unit
         pub functions: Vec<FunctionDef>,
     }
 }
 
+/// Since the CST has both too much information (spans) and too little information (some shape information is knowable from the grammar, but not statically reflected), we convert it into an AST.
+/// The module is a set of functions with the same recursion structure as the production rules, that recurse over the CST to convert it into an AST.
 pub mod concrete_to_abstract_syntax;
 
+/// Constants for and functions for manipulating x86 literals
 pub mod x86_instructions {
     // for reg in {eax,ecx,edx,ebx,esp,ebp,esi,edi}; do rasm2 "add esp, $reg" | sed 's/\(..\)/\\x\1/g; s/^.*$/\&*b"\0",/'; done
+    /// "pop $reg"
     const POP_EXX: [&[u8]; 8] = [&*b"\x58", &*b"\x59", &*b"\x5a", &*b"\x5b", &*b"\x5c", &*b"\x5d", &*b"\x5e", &*b"\x5f"];
+    /// "imul $reg"
     const IMUL_EXX: [&[u8]; 8] = [&*b"\xf7\xe8", &*b"\xf7\xe9", &*b"\xf7\xea", &*b"\xf7\xeb", &*b"\xf7\xec", &*b"\xf7\xed", &*b"\xf7\xee", &*b"\xf7\xef"];
-    const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"]; // "mov $reg, dword [eax]"
-    const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"]; // "mov dword [eax], $reg"
+    /// "mov $reg, dword [eax]"
+    const LOAD_EXX_EAX: [&[u8]; 8] = [&*b"\x8b\x00", &*b"\x8b\x08", &*b"\x8b\x10", &*b"\x8b\x18", &*b"\x8b\x20", &*b"\x8b\x28", &*b"\x8b\x30", &*b"\x8b\x38"];
+    /// "mov dword [eax], $reg"
+    const STORE_EAX_EXX: [&[u8]; 8] = [&*b"\x89\x00", &*b"\x89\x08", &*b"\x89\x10", &*b"\x89\x18", &*b"\x89\x20", &*b"\x89\x28", &*b"\x89\x30", &*b"\x89\x38"];
     include!("arith_gadgets.generated.rs");
     include!("cmov_gadgets.generated.rs");
 
+    /// Kinds of gadgets, without specifying the last register
+    #[allow(missing_docs)]
     #[derive(Debug, Clone, Copy)]
     pub enum GadgetKind { Pop, Imul, LoadEax, StoreEax, Add(X86Reg), Sub(X86Reg), Xor(X86Reg), Mov(X86Reg), Xchg(X86Reg), CmovCcEax(X86ConditionCode) }
 
     impl GadgetKind {
+        /// All the GadgetKinds
         pub fn all_values() -> Vec<GadgetKind> {
             use GadgetKind::*;
             let mut ret = vec![Pop, Imul, LoadEax, StoreEax];
@@ -95,6 +136,7 @@ pub mod x86_instructions {
             }
             ret
         }
+        /// For a particular GadgetKind, the instructions that correspond to it, for each register
         pub fn gadgets_by_register(&self) -> [&'static [u8]; 8] {
             use GadgetKind::*; use X86ConditionCode::*;
             match *self {
@@ -135,6 +177,7 @@ pub mod x86_instructions {
     }
 
     lazy_static! {
+        /// All the byte patterns for gadgets we care about
         pub static ref ALL_GADGETS: Vec<&'static [u8]> = {
             let mut ret = Vec::new();
             for gadget_kind in &GadgetKind::all_values() {
@@ -146,6 +189,8 @@ pub mod x86_instructions {
         };
     }
 
+    /// The 8 x86 registers we use, in the order they are in the table
+    #[allow(missing_docs)]
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub enum X86Reg {
@@ -153,12 +198,15 @@ pub mod x86_instructions {
     }
 
     impl X86Reg {
+        /// All the X86Reg's, in order
         pub fn all_values() -> [X86Reg; 8] {
             use X86Reg::*;
             [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI]
         }
     }
 
+    /// All the X86 condition codes (used by jmp and cmov)
+    #[allow(missing_docs)]
     #[repr(C)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum X86ConditionCode {
@@ -167,6 +215,7 @@ pub mod x86_instructions {
     }
 
     impl X86ConditionCode {
+        /// All the X86ConditionCode's
         pub fn all_values() -> [X86ConditionCode; 18] {
             use X86ConditionCode::*;
             [Above, AboveEq, Below, BelowEq, Carry, RCX, Eq, Greater, GreaterEq, Less, LessEq, NotEq,
@@ -174,13 +223,17 @@ pub mod x86_instructions {
         }
     }
 }
+
+/// Given the executable sections of a binary and their virtual addresses, build a BTreeMap that indexes addresses of the gadgets we care
 pub mod gadget_search {
     use std::collections::BTreeMap;
     use std::fmt;
+    /// Find the gadgets with a naive O(n*m) search (we can take a dependency on an O(n+m) string search library after codegen is implemented)
     pub fn find_gadgets<'gadgets>(gadgets: &mut BTreeMap<&'gadgets [u8], Vec<usize>>, section: &[u8], section_offset: usize, goals: &[&'gadgets [u8]]) {
         for goal in goals.iter() {
             let n = goal.len();
             for (i, bytes) in section.windows(n).enumerate() {
+                // TODO: fancier suffix-nop detection if we end up being too limited for gadgets?
                 let acceptable_suffixes: &[&[u8]] = &[&*b"\xc3", &*b"\x90\xc3", &*b"\x90\x90\xc3"];
                 if bytes == *goal {
                     //println!("{:?}", &section[i..i+n+5]);
@@ -191,6 +244,7 @@ pub mod gadget_search {
             }
         }
     }
+    /// Newtype wrapper for displaying the resulting BTreeMap as an aligned table, with `X86Reg`s on the x-axis, and `GadgetKind`s on the y-axis, with {0,1} in a cell indicating the {ab,pre}sence of the gadget
     pub struct ViewGadgetsAsChart<'a, 'b>(pub &'a BTreeMap<&'b [u8], Vec<usize>>);
     impl<'a, 'b> fmt::Display for ViewGadgetsAsChart<'a, 'b> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -223,8 +277,10 @@ pub mod gadget_search {
     }
 }
 
+/// High-level interpreter with separate memory spaces for variables and pointers, for experimenting with language features and checking that they match the compiled outputs
 pub mod high_level_eval;
 
+/// "stack-ish" IR, in which IR-level jumps are conditional stack pivots in x86, but IR registers are directly x86 registers
 pub mod stackish_machine {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::{self, Debug, Display, Formatter};
@@ -233,6 +289,7 @@ pub mod stackish_machine {
     use super::abstract_syntax::*;
     use super::x86_instructions::X86ConditionCode;
 
+    /// Newtype for basic block indices
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct BasicBlockIndex(usize);
     impl ops::Add<usize> for BasicBlockIndex {
@@ -245,20 +302,31 @@ pub mod stackish_machine {
     /// InstructionAddresses are (which basic block, index into basic block)
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub struct InstructionAddress(BasicBlockIndex, usize);
+
+    /// IR-level register, not yet mapped to concrete x86 registers
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum RegisterNumber {
+        /// RSP
         InstructionPointer,
+        /// RAX
         Accumulator,
+        /// To be allocated by graph coloring
         GeneralPurpose(usize),
-        ArgumentNumber(usize), // codegen these to be compatible with x86 ABI?
+        /// To be allocated by graph coloring, with preference to x86 calling conventions
+        ArgumentNumber(usize),
     }
 
+    /// IR-level LValues
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     pub enum Location {
+        /// IR-level register
         Reg(RegisterNumber),
+        /// IR-IP-relative memory offset
         RelMem(isize),
     }
 
+    /// Kind of arithmetic instruction, subset of x86_instructions::GadgetKind
+    #[allow(missing_docs)]
     #[derive(Debug, Clone, Copy)]
     pub enum ArithKind {
         Add, Sub, Mul, Xor, Swap, CMovLe
@@ -269,15 +337,25 @@ pub mod stackish_machine {
     /// instruction addresses are basic block indices at this level
     #[derive(Debug, Clone)]
     pub enum StackishOp<A> {
+        /// ret
         Nop,
+        /// pop resolved_addr
         Jump(BasicBlockIndex),
-        ConditionalBranch(X86ConditionCode, BasicBlockIndex), // CMOVcc rsp, resolved_addr
+        /// CMOVcc rsp, resolved_addr
+        ConditionalBranch(X86ConditionCode, BasicBlockIndex),
+        /// pop $reg
         LoadImmediate(RegisterNumber, u64),
+        /// $instr eax, $reg
         ArithAccumReg(ArithKind, RegisterNumber),
+        /// mov eax, $reg
         LoadAccum(RegisterNumber),
+        /// mov $reg, eax
         StoreAccum(RegisterNumber),
+        /// int $0x80
         Syscall,
+        /// mov $reg0, $reg1
         MovRegReg(RegisterNumber, RegisterNumber),
+        /// hook for additional instructions
         Extra(A),
     }
 
@@ -285,19 +363,29 @@ pub mod stackish_machine {
     /// they can be lowered to plain StackishOp's later
     #[derive(Debug, Clone)]
     pub enum HigherLevelOps {
+        /// IR-IP-relative store
         StoreStartRelative(isize, RegisterNumber),
+        /// IR-IP-relative load
         LoadStartRelative(RegisterNumber, isize),
     }
 
+    /// Offset for allocating IR-IP-relative memory
     const ZONE_BETWEEN_VARS_AND_PROG: isize = 0x100;
 
+    /// State for translating an AST program to the stack machine
     #[derive(Debug)]
     pub struct StackishProgram<Ops> {
+        /// The list of ops at each basic block
         basic_blocks: BTreeMap<BasicBlockIndex, Vec<StackishOp<Ops>>>,
+        /// The basic block we're currently emitting code for
         current_bb: BasicBlockIndex,
+        /// IR-IP relative variable offsets
         vars_from_start: BTreeMap<String, isize>, // stack before the ropchain is probably overwriteable, so allocate vars backwards from there
+        /// The types of AST-level variables
         type_ctx: BTreeMap<String, TypeId>,
+        /// The next IR-IP-relative offset
         next_var_offset: isize,
+        /// The next register to allocate (will be condensed by graph coloring)
         next_temp_register: usize,
     }
 
@@ -321,6 +409,7 @@ pub mod stackish_machine {
     }
 
     impl<Ops: Clone + Debug> StackishProgram<Ops> {
+        /// Create a blank StackishProgram context
         pub fn new() -> StackishProgram<Ops> {
             StackishProgram {
                 basic_blocks: BTreeMap::from_iter(vec![(BasicBlockIndex(0), vec![])]),
@@ -331,23 +420,26 @@ pub mod stackish_machine {
                 next_temp_register: 0,
             }
         }
+        /// Push one op to the current basic block
         pub fn push_to_current_bb(&mut self, op: StackishOp<Ops>) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().push(op);
         }
+        /// Push many ops to the current basic block
         pub fn extend_current_bb(&mut self, ops: &[StackishOp<Ops>]) {
             self.basic_blocks.get_mut(&self.current_bb).unwrap().extend_from_slice(ops);
         }
-
+        /// Close the previous basic block and start a new one, returning the index of the new one
         pub fn start_basic_block(&mut self) -> BasicBlockIndex {
             self.current_bb.0 += 1;
             self.basic_blocks.insert(self.current_bb, vec![]);
             self.current_bb
         }
+        /// Allocate a general purpose register
         pub fn get_next_gpr(&mut self) -> RegisterNumber {
             self.next_temp_register += 1;
             RegisterNumber::GeneralPurpose(self.next_temp_register)
         }
-
+        /// Iterate over all the instructions emitted so far
         pub fn for_each_instruction<F: FnMut(InstructionAddress, &StackishOp<Ops>)>(&self, mut f: F) {
             for (bb, block) in &self.basic_blocks {
                 for (i, inst) in block.iter().enumerate() {
@@ -355,6 +447,7 @@ pub mod stackish_machine {
                 }
             }
         }
+        /// Calculate the successor addresses of the given instruction, counting fallthrough, jumps, and conditional jumps
         pub fn successors(&self, node: InstructionAddress) -> BTreeSet<InstructionAddress> {
             let bb = &self.basic_blocks[&node.0];
             if node.1 == bb.len() - 1 {
@@ -377,6 +470,7 @@ pub mod stackish_machine {
     }
 
     impl StackishProgram<HigherLevelOps> {
+        /// Allocate a typed variable
         pub fn declare_value(&mut self, name: &str, ty: &TypeId, value: RegisterNumber) {
             self.next_var_offset -= ty.size_in_bytes() as isize;
             let addr = self.next_var_offset;
@@ -385,7 +479,8 @@ pub mod stackish_machine {
             self.push_to_current_bb(StackishOp::Extra(HigherLevelOps::StoreStartRelative(addr, value)));
         }
     }
-    // TODO: should this take a register number (hence requiring translate_stmt to schedule all the registers?
+    /// Translate an expression
+    // TODO: should this take a register number (hence requiring translate_stmt to schedule all the registers)?
     pub fn translate_expr(prog: &mut StackishProgram<HigherLevelOps>, expr: &Expr) -> RegisterNumber {
         println!("translate expr {:?}: {:?}", expr, prog);
         match expr {
@@ -413,6 +508,7 @@ pub mod stackish_machine {
             },
         }
     }
+    /// Translate a statement
     pub fn translate_stmt(prog: &mut StackishProgram<HigherLevelOps>, stmt: &Statement) {
         println!("translate stmt {:?}", stmt);
         match stmt {
@@ -457,6 +553,7 @@ pub mod stackish_machine {
         }
     }
 
+    /// Translate a function
     pub fn translate_function(prog: &mut StackishProgram<HigherLevelOps>, func: &FunctionDef) {
         for (i, (name, ty)) in func.args.iter().enumerate() {
             prog.declare_value(name, ty, RegisterNumber::ArgumentNumber(i));
@@ -466,19 +563,26 @@ pub mod stackish_machine {
         }
     }
 
+    /// Def-use info, used for a variety of standard dataflow analysis passes
     #[derive(Debug)]
     pub struct DefUseInfo {
+        /// Which `Location`s are defined by which instructions?
         defs: BTreeMap<InstructionAddress, BTreeSet<Location>>,
+        /// Which `Locations` are used at which instructions?
         uses: BTreeMap<InstructionAddress, BTreeSet<Location>>,
     }
+
+    /// Insert a value into the set associated with a key, creating the set if it does not exist
     pub fn mapset_insert<K: Ord, V: Ord>(map: &mut BTreeMap<K, BTreeSet<V>>, key: K, val: V) {
         map.entry(key).or_insert_with(|| BTreeSet::new()).insert(val);
     }
 
+    /// Compute the def-use info from a stackish program
     pub fn compute_def_use(prog: &StackishProgram<HigherLevelOps>) -> DefUseInfo {
         let mut defuse = DefUseInfo { defs: BTreeMap::new(), uses: BTreeMap::new() };
         prog.for_each_instruction(|inst_addr, inst| {
             use StackishOp::*; use HigherLevelOps::*;
+            // many instructions have assignment-like behavior, so deduplicate that fact
             let assignment = |defuse: &mut DefUseInfo, dst, src| {
                 mapset_insert(&mut defuse.defs, inst_addr, dst);
                 mapset_insert(&mut defuse.uses, inst_addr, src);
@@ -514,15 +618,24 @@ pub mod stackish_machine {
         });
         defuse
     }
+    /// A join-semilattice for dataflow analysis, together with the transfer function for an analysis pass
+    // (TODO: these should maybe be two separate traits?)
     pub trait DataflowLattice {
+        /// Context for the transfer function
         type Context;
+        /// The index (usually program points) that the facts are associated with
         type Index;
+        /// The type of the dataflow facts themselves
         type Fact: Eq+Clone;
+        /// Bottom of the join-semilattice
         fn bottom() -> Self::Fact;
+        /// Inplace "join-assigment" for the join-semilattice (saves memory in the common case of sets)
         fn join(x: &mut Self::Fact, y: &Self::Fact);
+        /// Transfer function for the analysis pass
         fn transfer(ctx: &Self::Context, idx: &Self::Index, x: Self::Fact) -> Self::Fact;
     }
 
+    /// Liveness analysis, used to construct a graph for register allocation through graph coloring
     pub struct LivenessAnalysis;
     impl DataflowLattice for LivenessAnalysis {
         type Context = DefUseInfo;
@@ -545,7 +658,8 @@ pub mod stackish_machine {
             use_n.union(&out_minus_def).cloned().collect()
         }
     }
-        
+
+    /// Compute forwards dataflow analysis over a stackish program
     pub fn compute_forwards_dataflow<D: DataflowLattice<Index=InstructionAddress>>(prog: &StackishProgram<HigherLevelOps>, ctx: &D::Context) -> (BTreeMap<D::Index, D::Fact>, BTreeMap<D::Index, D::Fact>) where D::Fact: std::fmt::Debug {
         let mut old_in = BTreeMap::new();
         let mut old_out = BTreeMap::new();
@@ -572,7 +686,30 @@ pub mod stackish_machine {
     }
 }
 
+/// Graph algorithms for graph-coloring register allocation
 pub mod graph_algos;
+
+#[allow(missing_docs)]
+pub mod codegen {
+    use super::stackish_machine::*;
+    use super::x86_instructions::*;
+    use std::collections::BTreeMap;
+    pub struct CodegenCtx<'gadgets> {
+        gadget_locs: BTreeMap<&'gadgets [u8], Vec<usize>>,
+        regalloc: BTreeMap<RegisterNumber, X86Reg>,
+    }
+    impl<'gadgets> CodegenCtx<'gadgets> {
+        fn gadget_available(&self, gadget: GadgetKind) -> bool {
+            unimplemented!()
+        }
+        fn physreg_for_absreg(&self, absreg: RegisterNumber) -> X86Reg {
+            unimplemented!()
+        }
+        fn do_codegen(&mut self, prog: &StackishProgram<HigherLevelOps>) {
+            unimplemented!()
+        }
+    }
+}
 
 fn main() {
     use std::fs::File;
@@ -597,7 +734,6 @@ fn main() {
         {
             use stackish_machine::*;
             use petgraph::{Graph, dot::{Dot, Config}, visit::NodeIndexable};
-            use std::collections::BTreeSet;
             let mut prog = StackishProgram::new();
             translate_function(&mut prog, &f);
             println!("stackish program: {}", prog);

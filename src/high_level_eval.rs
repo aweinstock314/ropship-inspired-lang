@@ -1,14 +1,19 @@
 use std::collections::BTreeMap;
 use super::abstract_syntax::*;
 
+/// Interpreter memory
 #[derive(Debug)]
 pub struct HighLevelState {
+    /// memory for pointers, indexed by address
     pub concrete_mem: BTreeMap<u64, u8>,
+    /// memory for variables, indexed by name
     pub abstract_mem: BTreeMap<String, u64>,
+    /// types of variables
     pub type_ctx: BTreeMap<String, TypeId>,
 }
 
 impl HighLevelState {
+    /// Create an empty HighLevelState
     pub fn new() -> HighLevelState {
         HighLevelState {
             concrete_mem: BTreeMap::new(),
@@ -16,6 +21,7 @@ impl HighLevelState {
             type_ctx: BTreeMap::new(),
         }
     }
+    /// Allocate a slice of bytes, and return the offset it was allocated at
     pub fn allocate_data(&mut self, data: &[u8]) -> u64 {
         let highest_allocated: u64 = self.concrete_mem.range(..).next_back().map(|(x,_)| *x).unwrap_or(0);
         let start = highest_allocated + 1;
@@ -24,6 +30,7 @@ impl HighLevelState {
         }
         start
     }
+    /// Read a word of concrete memory
     pub fn read64(&self, addr: u64) -> u64 {
         let mut res = 0u64;
         for i in 0..8 {
@@ -31,12 +38,14 @@ impl HighLevelState {
         }
         res
     }
+    /// Allocate a typed variable
     pub fn declare_value(&mut self, name: &str, ty: &TypeId, val: u64) {
         self.abstract_mem.insert(name.into(), val);
         self.type_ctx.insert(name.into(), ty.clone());
     }
 }
 
+/// Evaluate an expression
 pub fn eval_expr(state: &HighLevelState, expr: &Expr) -> u64 {
     println!("eval expr: {:?}", expr);
     match expr {
@@ -46,12 +55,16 @@ pub fn eval_expr(state: &HighLevelState, expr: &Expr) -> u64 {
     }
 }
 
+/// Since eval_stmt is recursive (since the body of a loop is a list of statements), we need to rust-level-return whether to object-level-return out of a nested loop
 #[derive(Debug)]
 pub enum ControlFlow {
+    /// Continue to the next loop iteration
     Next,
+    /// Return from the current function
     Return(u64),
 }
 
+/// Evaluate a statement
 pub fn eval_stmt(state: &mut HighLevelState, stmt: &Statement) -> ControlFlow {
     println!("eval stmt: {:?}", stmt);
     match stmt {
@@ -84,6 +97,7 @@ pub fn eval_stmt(state: &mut HighLevelState, stmt: &Statement) -> ControlFlow {
     ControlFlow::Next
 }
 
+/// Evaluate a function
 pub fn eval_function(state: &mut HighLevelState, func: &FunctionDef, args: &[u64]) -> Option<u64> {
     for ((name, ty), val) in func.args.iter().zip(args) {
         state.declare_value(name, ty, *val);

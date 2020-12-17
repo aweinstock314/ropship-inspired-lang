@@ -1,6 +1,7 @@
-use petgraph::visit::{EdgeRef, NodeCompactIndexable, IntoEdges, IntoEdgeReferences};
+use petgraph::visit::{EdgeRef, NodeCompactIndexable, IntoEdgeReferences};
 use std::ops::{Add, AddAssign};
 
+/// Newtype for graph colors
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Color(pub usize);
 
@@ -26,6 +27,7 @@ pub fn is_valid_coloring<G>(g: G, k: usize, candidate: &[Color]) -> bool
     true
 }
 
+/// Increment a permutation, returning true if iteration has reached all values in [lo,hi]^{x.len()}
 pub fn increment_permutation<T: Copy + Ord + AddAssign<usize>>(x: &mut [T], lo: T, hi: T) -> bool {
     let mut i = 0;
     x[i] += 1;

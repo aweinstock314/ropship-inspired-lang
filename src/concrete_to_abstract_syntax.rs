@@ -1,6 +1,8 @@
 use super::concrete_syntax::Rule;
 use super::abstract_syntax::*;
 use pest::iterators::Pair;
+
+/// ASTify an identifier
 pub fn ident(pair: Pair<Rule>) -> String {
     if let Rule::ident = pair.as_rule() {
         pair.as_span().as_str().into()
@@ -8,6 +10,7 @@ pub fn ident(pair: Pair<Rule>) -> String {
         panic!("expected ident, got {:?}", pair.as_rule());
     }
 }
+/// ASTify a literal
 pub fn numeric_literal(pair: Pair<Rule>) -> String {
     if let Rule::numeric_literal = pair.as_rule() {
         pair.as_span().as_str().into()
@@ -15,6 +18,7 @@ pub fn numeric_literal(pair: Pair<Rule>) -> String {
         panic!("expected numeric_literal, got {:?}", pair.as_rule());
     }
 }
+/// ASTify a type
 pub fn typeid(pair: Pair<Rule>) -> TypeId {
     if let Rule::type_id = pair.as_rule() {
         let mut pairs = pair.into_inner();
@@ -30,6 +34,7 @@ pub fn typeid(pair: Pair<Rule>) -> TypeId {
         panic!("expected type_id, got {:?}", pair.as_rule());
     }
 }
+/// ASTify a variable
 pub fn vardecl(pair: Pair<Rule>) -> (String, TypeId) {
     if let Rule::vardecl = pair.as_rule() {
         let mut pairs = pair.into_inner();
@@ -41,6 +46,7 @@ pub fn vardecl(pair: Pair<Rule>) -> (String, TypeId) {
         panic!("expected vardecl, got {:?}", pair.as_rule());
     }
 }
+/// ASTify an expression
 pub fn expr(pair: Pair<Rule>) -> Expr {
     if let Rule::expr = pair.as_rule() {
         let exp = pair.into_inner().next().unwrap();
@@ -56,6 +62,7 @@ pub fn expr(pair: Pair<Rule>) -> Expr {
         panic!("expected expr, got {:?}", pair.as_rule());
     }
 }
+/// ASTify an assignment modifier
 pub fn assignment_modifier(pair: Pair<Rule>) -> AssignmentModifier {
     match pair.as_span().as_str() {
         "=" => AssignmentModifier::Normal,
@@ -63,6 +70,7 @@ pub fn assignment_modifier(pair: Pair<Rule>) -> AssignmentModifier {
         other => panic!("invalid assignment modifier {:?}", other),
     }
 }
+/// ASTify a statement
 pub fn statement(pair: Pair<Rule>) -> Statement {
     if let Rule::statement = pair.as_rule() {
         let stmt = pair.into_inner().next().unwrap();
@@ -96,6 +104,7 @@ pub fn statement(pair: Pair<Rule>) -> Statement {
         panic!("expected statement, got {:?}", pair.as_rule());
     }
 }
+/// ASTify a function definition
 pub fn functiondef(pair: Pair<Rule>) -> FunctionDef {
     if let Rule::function = pair.as_rule() {
         let mut pairs = pair.into_inner();
